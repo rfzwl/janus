@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "janus"
+version = "0.1.0"
+description = "janus"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "wesley", email = "wesley@genlius.com"}
+]
+keywords = ["quant", "trading", "vnpy", "interactive-brokers", "webull"]
+
+# 核心依赖项
+dependencies = [
+    "vnpy==4.3.0",
+    "protobuf==4.21.12",
+    
+    # Interactive Brokers 接口 (IB Gateway)
+
+    "vnpy-ib",
+    
+    # 策略应用模块 (根据你的需求添加)
+    "vnpy-ctastrategy",      # CTA 策略
+    "vnpy-portfoliostrategy",# 组合策略 (你之前询问过的)
+    "vnpy-riskmanager",      # 风控模块
+    
+    "vnpy-postgresql",
+    
+    
+    # 科学计算库 (通常 vnpy 会自动处理，但在 pyproject 中显式声明是好习惯)
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+# 开发工具依赖 (可选)
+dev = [
+    "black",        # 代码格式化
+    "ruff",         # 代码检查 (比 flake8 更快)
+    "pytest",       # 单元测试
+    "jupyterlab",   # 用于研究和回测
+]
+
+
+[tool.setuptools]
+# 自动发现包
+#packages = ["strategies", "utils"]  # 假设你的策略代码放在 strategies 文件夹下
+
+[tool.black]
+line-length = 88
+target-version = ['py311']
+
+[tool.ruff]
+line-length = 120
