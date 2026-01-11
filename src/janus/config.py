@@ -31,6 +31,15 @@ class ConfigLoader:
             "客户号": ib_conf.get("client_id", 1),
         }
 
+    def get_webull_official_setting(self) -> Dict[str, Any]:
+        """Load Official Open API Config"""
+        wb_conf = self.config.get("webull", {})
+        return {
+            "app_key": wb_conf.get("app_key", ""),
+            "app_secret": wb_conf.get("app_secret", ""),
+            "region_id": wb_conf.get("region_id", "us"),
+        }
+
     def get_rpc_setting(self) -> Dict[str, str]:
         return self.config.get("rpc", {
             "rep_address": "tcp://*:2014",

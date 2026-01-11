@@ -39,10 +39,11 @@ class JanusServer:
     def run(self):
         logger.info("Starting Janus Server...")
         
-        # 1. Connect to IB
-        ib_setting = self.config.get_ib_setting()
-        self.main_engine.connect(ib_setting, "IB")
-        logger.info(f"Connecting to IB Gateway with: {ib_setting}")
+        # 1. Connect to Webull Official
+        wb_setting = self.config.get_webull_official_setting()
+
+        self.main_engine.add_gateway(WebullOfficialGateway)
+        self.main_engine.connect(wb_setting, "WEBULL")
         
         # Give it a second to initiate connection (optional check could be added)
         time.sleep(2)

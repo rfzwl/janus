@@ -1,3 +1,8 @@
+webull:
+  app_key: "YOUR_WEBULL_APP_KEY_HERE"
+  app_secret: "YOUR_WEBULL_APP_SECRET_HERE"
+  region_id: "us"
+
 rpc:
-  rep_address: "tcp://localhost:2014"
-  pub_address: "tcp://localhost:4102"
+  rep_address: "tcp://*:2014"
+  pub_address: "tcp://*:4102"
