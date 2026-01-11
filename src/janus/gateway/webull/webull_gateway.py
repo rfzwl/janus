@@ -32,7 +32,6 @@ class WebullOfficialGateway(BaseGateway):
 
         self.api_client: Optional[ApiClient] = None
         self.trade_client: Optional[TradeClient] = None
-        # self.quotes_client 移除
 
         self.account_id = ""
         self.app_key = ""
@@ -60,7 +59,6 @@ class WebullOfficialGateway(BaseGateway):
             self.api_client.add_endpoint(self.region_id, "api.webull.com")
             
             self.trade_client = TradeClient(self.api_client)
-            # 这里的 quotes_client 初始化代码已被移除
 
             # 2. 获取账户
             self.on_log("正在获取账户列表...")
@@ -71,6 +69,7 @@ class WebullOfficialGateway(BaseGateway):
                 return
 
             data = resp.json()
+            # 兼容 list 或 dict
             acct_list = data if isinstance(data, list) else data.get('data', [])
             
             if not acct_list:
@@ -96,15 +95,12 @@ class WebullOfficialGateway(BaseGateway):
         if not self.trade_client:
             return ""
         
-        # === 核心修改: 不再查找 ID，强制要求 Symbol 必须是数字 ===
         if not req.symbol.isdigit():
             self.on_log(f"下单失败: MVP版本不支持代码查询。请直接输入TickerID数字 (例如 AAPL=913256135)")
-            self.on_log(f"您输入的 Symbol 是: {req.symbol}")
             return ""
         
         ticker_id = int(req.symbol)
 
-        # 构建参数
         params = {
             "tickerId": ticker_id,
             "action": DIRECTION_VT2WB.get(req.direction, 'BUY'),
@@ -115,7 +111,6 @@ class WebullOfficialGateway(BaseGateway):
         if req.type == OrderType.LIMIT:
             params["lmtPrice"] = str(req.price)
 
-        # 发送请求
         try:
             self.on_log(f"发送订单: {params}")
             resp = self.trade_client.trade.place_order(self.account_id, params)
@@ -125,7 +120,6 @@ class WebullOfficialGateway(BaseGateway):
                 order_data = data.get('data', data)
                 wb_order_id = str(order_data.get('orderId'))
                 
-                # 本地生成 OrderData
                 order = req.create_order_data(wb_order_id, self.gateway_name)
                 order.status = Status.NOTTRADED
                 self.on_order(order)
@@ -145,9 +139,18 @@ class WebullOfficialGateway(BaseGateway):
         except Exception as e:
             self.on_log(f"撤单异常: {e}")
 
+    # --- 必须实现的抽象方法 (Dummy Implementations) ---
     def subscribe(self, req: SubscribeRequest):
-        # MVP 不做行情订阅
         pass
+
+    def query_account(self):
+        """MVP Dummy Method"""
+        pass
+
+    def query_position(self):
+        """MVP Dummy Method"""
+        pass
+    # -----------------------------------------------
 
     def close(self):
         self.active = False
@@ -167,8 +170,7 @@ class WebullOfficialGateway(BaseGateway):
         try:
             resp = self.trade_client.trade.get_open_orders(self.account_id)
             if resp.status_code == 200:
-                data = resp.json()
-                # 这里可以处理订单更新，暂时略过细节防止报错
+                # 暂时只做空跑，防止报错
                 pass
         except:
             pass
