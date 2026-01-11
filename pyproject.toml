@@ -9,7 +9,9 @@ dependencies = [
     "vnpy_ib",
     "prompt_toolkit>=3.0.36",
     "pyyaml",
-    "rich"  # 用于美化表格输出
+    "rich", # 用于美化表格输出
+    "protobuf==4.21.12", #required by webull
+    "webull-openapi-python-sdk>=1.0.7"
 ]
 
 [tool.setuptools.packages.find]
