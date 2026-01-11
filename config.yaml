@@ -1,8 +1,0 @@
-webull:
-  app_key: "5a13e73aa300619cf49406b7eb86cff9"
-  app_secret: "b913e3198eb2c505b714de00fe525686"
-  region_id: "us"
-
-rpc:
-  rep_address: "tcp://*:2014"
-  pub_address: "tcp://*:4102"
