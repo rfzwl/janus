@@ -8,7 +8,6 @@ from vnpy.event import EventEngine
 from vnpy.trader.engine import MainEngine
 from vnpy.trader.ui import MainWindow, create_qapp
 from vnpy_rpcservice import RpcServiceApp
-from vnpy_ib import IbGateway
 
 from .config import ConfigLoader
 
@@ -25,7 +24,6 @@ class JanusServer:
 
         # Add Apps and Gateways
         self.main_engine.add_app(RpcServiceApp)
-        self.main_engine.add_gateway(IbGateway)
 
         # Get Engines
         self.rpc_engine = self.main_engine.get_engine("RPC")

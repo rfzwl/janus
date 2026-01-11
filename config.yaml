@@ -1,6 +1,6 @@
 webull:
-  app_key: "YOUR_WEBULL_APP_KEY_HERE"
-  app_secret: "YOUR_WEBULL_APP_SECRET_HERE"
+  app_key: "5a13e73aa300619cf49406b7eb86cff9"
+  app_secret: "b913e3198eb2c505b714de00fe525686"
   region_id: "us"
 
 rpc:
