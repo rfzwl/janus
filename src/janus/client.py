@@ -100,13 +100,17 @@ def main():
     client = JanusRpcClient()
     rpc_conf = client.config.get_rpc_setting()
     
-    print(f"Connecting to RPC at {rpc_conf['rep_address']}...")
+    # 【关键修复】将 bind 地址 (*) 转换为 connect 地址 (localhost)
+    req_addr = rpc_conf["rep_address"].replace("*", "localhost")
+    sub_addr = rpc_conf["pub_address"].replace("*", "localhost") # 对应服务端的 PUB
+
+    print(f"Connecting to RPC at {req_addr}...")
+    
     client.subscribe_topic("")
     
-    # 【修复点】使用 sub_address 参数名
     client.start(
-        req_address=rpc_conf["rep_address"], 
-        sub_address=rpc_conf["pub_address"]  # <--- 修改这里: pub_address -> sub_address
+        req_address=req_addr, 
+        sub_address=sub_addr 
     )
     
     tui = JanusTUI(client)
@@ -121,3 +125,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
