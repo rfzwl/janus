@@ -7,7 +7,6 @@ from vnpy.event import EventEngine
 from vnpy.trader.engine import MainEngine
 from vnpy_rpcservice import RpcServiceApp
 
-# 确保导入了 Gateway
 from .gateway.webull.webull_gateway import WebullOfficialGateway
 from .config import ConfigLoader
 
@@ -26,17 +25,15 @@ class JanusServer:
         self.main_engine.add_gateway(WebullOfficialGateway)
 
         # 2. 获取 RPC 引擎
-        # 【关键修复】名称必须是 "RpcService" 而不是 "RPC"
         self.rpc_engine = self.main_engine.get_engine("RpcService")
         
         if not self.rpc_engine:
             logger.error("严重错误：无法加载 RPC 引擎！请检查 vnpy_rpcservice 是否安装正确。")
-            # 打印当前所有引擎名称以供调试
             logger.error(f"Available Engines: {list(self.main_engine.engines.keys())}")
             sys.exit(1)
 
     def run(self):
-        logger.info("Starting Janus Server (Webull Official API)...")
+        logger.info("Starting Janus Server ...")
         
         # 3. 连接 Webull
         wb_setting = self.config.get_webull_setting()
