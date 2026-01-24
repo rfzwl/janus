@@ -31,7 +31,8 @@ class JanusServer:
             logger.error(f"Available Engines: {list(self.main_engine.engines.keys())}")
             sys.exit(1)
 
-        self.rpc_engine.register(self.remote_exit)
+        self.rpc_engine.server.register(self.remote_exit)
+
 
     def remote_exit(self):
         """
