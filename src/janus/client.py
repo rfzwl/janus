@@ -59,7 +59,7 @@ class JanusRpcClient(RpcClient):
 
     def _send_order_cmd(self, parts: list):
         if len(parts) < 4:
-            self.log_callback("Usage: <action> <symbol> <volume> <price>")
+            self.log_callback("Usage: <action> <symbol> <volume> <price> [exchange]")
             return
 
         direction_map = {
@@ -82,7 +82,7 @@ class JanusRpcClient(RpcClient):
                 "offset": Offset.OPEN 
             }
             
-            order_id = self.send_order(req) 
+            order_id = self.send_order(req, "WEBULL") 
             self.log_callback(f"Order sent: {order_id}")
             
         except Exception as e:
@@ -125,4 +125,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
