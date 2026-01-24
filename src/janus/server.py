@@ -1,4 +1,3 @@
-import time
 import sys
 import logging
 from threading import Event
@@ -32,6 +31,16 @@ class JanusServer:
             logger.error(f"Available Engines: {list(self.main_engine.engines.keys())}")
             sys.exit(1)
 
+        self.rpc_engine.register(self.remote_exit)
+
+    def remote_exit(self):
+        """
+        供客户端调用的远程关闭函数
+        """
+        logger.warning("收到客户端远程关闭指令 (Remote Exit) ...")
+        self.stop_event.set()
+        return "Server is shutting down..."
+
     def run(self):
         logger.info("Starting Janus Server ...")
         
@@ -57,8 +66,10 @@ class JanusServer:
         # 5. 主循环
         try:
             while not self.stop_event.is_set():
-                time.sleep(1)
+                self.stop_event.wait(1.0)
         except KeyboardInterrupt:
+            logger.info("KeyboardInterrupt received.")
+        finally:
             self.shutdown()
 
     def shutdown(self):
