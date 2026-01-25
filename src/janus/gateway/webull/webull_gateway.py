@@ -112,7 +112,9 @@ class WebullOfficialGateway(BaseGateway):
             params["lmtPrice"] = str(req.price)
 
         try:
-            self.on_log(f"发送订单: {params}")
+            # 【关键修复】转义花括号，防止 Loguru 崩溃
+            safe_params = str(params).replace("{", "{{").replace("}", "}}")
+            self.on_log(f"发送订单: {safe_params}")
             resp = self.trade_client.trade.place_order(self.account_id, params)
             
             if resp.status_code == 200:
