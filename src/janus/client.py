@@ -82,7 +82,8 @@ class JanusRpcClient(RpcClient):
                 "offset": Offset.OPEN 
             }
             
-            order_id = self.send_order(req, "WEBULL") 
+            # 【关键修复】增加第二个参数 "WEBULL"
+            order_id = self.send_order(req, "WEBULL")
             self.log_callback(f"Order sent: {order_id}")
             
         except Exception as e:
