@@ -4,6 +4,7 @@ from threading import Event
 
 from vnpy.event import EventEngine
 from vnpy.trader.engine import MainEngine
+from vnpy.trader.event import EVENT_LOG
 from vnpy_rpcservice import RpcServiceApp
 
 from .gateway.webull.webull_gateway import WebullOfficialGateway
@@ -16,6 +17,7 @@ class JanusServer:
     def __init__(self):
         self.config = ConfigLoader()
         self.event_engine = EventEngine()
+        self.event_engine.add_handler(EVENT_LOG, self._sanitize_log_event)
         self.main_engine = MainEngine(self.event_engine)
         self.stop_event = Event()
 
@@ -33,6 +35,14 @@ class JanusServer:
 
         self.rpc_engine.server.register(self.remote_exit)
 
+    def _sanitize_log_event(self, event) -> None:
+        log_data = getattr(event, "data", None)
+        if not log_data or not hasattr(log_data, "msg"):
+            return
+        try:
+            log_data.msg = str(log_data.msg).replace("{", "{{").replace("}", "}}")
+        except Exception:
+            pass
 
     def remote_exit(self):
         """
