@@ -17,10 +17,7 @@ class JanusServer:
     def __init__(self):
         self.config = ConfigLoader()
         self.event_engine = EventEngine()
-        if hasattr(self.event_engine, "add_handler"):
-            self.event_engine.add_handler(EVENT_LOG, self._sanitize_log_event)
-        else:
-            self.event_engine.register(EVENT_LOG, self._sanitize_log_event)
+        self.event_engine.register(EVENT_LOG, self._sanitize_log_event)
         self.main_engine = MainEngine(self.event_engine)
         self.stop_event = Event()
 
