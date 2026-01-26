@@ -11,7 +11,7 @@ from .gateway.webull.webull_gateway import WebullOfficialGateway
 from .config import ConfigLoader
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-logger = logging.getLogger("JanusServer")
+sys_logger = logging.getLogger("JanusBootstrap")
 
 class JanusServer:
     def __init__(self):
@@ -29,8 +29,8 @@ class JanusServer:
         self.rpc_engine = self.main_engine.get_engine("RpcService")
         
         if not self.rpc_engine:
-            logger.error("严重错误：无法加载 RPC 引擎！请检查 vnpy_rpcservice 是否安装正确。")
-            logger.error(f"Available Engines: {list(self.main_engine.engines.keys())}")
+            sys_logger.error("严重错误：无法加载 RPC 引擎！请检查 vnpy_rpcservice 是否安装正确。")
+            sys_logger.error(f"Available Engines: {list(self.main_engine.engines.keys())}")
             sys.exit(1)
 
         self.rpc_engine.server.register(self.remote_exit)
@@ -48,19 +48,20 @@ class JanusServer:
         """
         供客户端调用的远程关闭函数
         """
-        logger.warning("收到客户端远程关闭指令 (Remote Exit) ...")
+        msg = "收到客户端远程关闭指令 (Remote Exit) ..."
+        self.main_engine.write_log(msg)
         self.stop_event.set()
         return "Server is shutting down..."
 
     def run(self):
-        logger.info("Starting Janus Server ...")
+        sys_logger.info("Starting Janus Server ...")
         
         # 3. 连接 Webull
         wb_setting = self.config.get_webull_setting()
         if wb_setting.get("app_key"):
             self.main_engine.connect(wb_setting, "WEBULL")
         else:
-            logger.warning("No Webull config found in config.yaml!")
+            self.main_engine.write_log("WARNING: No Webull config found in config.yaml!")
         
         # 4. 启动 RPC 服务
         rpc_setting = self.config.get_rpc_setting()
@@ -69,9 +70,11 @@ class JanusServer:
                 rep_address=rpc_setting["rep_address"],
                 pub_address=rpc_setting["pub_address"]
             )
-            logger.info(f"RPC Service running at {rpc_setting['rep_address']}")
+            self.main_engine.write_log(
+                f"Janus Server Ready. RPC at {rpc_setting['rep_address']}"
+            )
         except Exception as e:
-            logger.error(f"Failed to start RPC service: {e}")
+            sys_logger.error(f"Failed to start RPC service: {e}")
             self.shutdown()
         
         # 5. 主循环
@@ -79,12 +82,12 @@ class JanusServer:
             while not self.stop_event.is_set():
                 self.stop_event.wait(1.0)
         except KeyboardInterrupt:
-            logger.info("KeyboardInterrupt received.")
+            sys_logger.info("KeyboardInterrupt received.")
         finally:
             self.shutdown()
 
     def shutdown(self):
-        logger.info("Shutting down...")
+        sys_logger.info("Shutting down...")
         self.main_engine.close()
         sys.exit(0)
 
