@@ -42,7 +42,6 @@ class WebullOfficialGateway(BaseGateway):
         self.active = False
         self.poll_thread = None
         self.query_interval = 2
-
     def connect(self, setting: Dict[str, Any]):
         self.app_key = setting.get("app_key", "")
         self.app_secret = setting.get("app_secret", "")
@@ -54,42 +53,44 @@ class WebullOfficialGateway(BaseGateway):
 
         try:
             self.on_log("正在连接 Webull Open API (Trade Only)...")
-            
-            # ================= [强力静音补丁 Start] =================
-            # 定义一个内部函数，专门用来清理 Webull 的日志污染
-            # 这里的目的是防止 Webull SDK 的 INFO 级别日志刷屏并导致系统崩溃
-            def silence_webull():
-                # 获取 webull 的总舵主 logger
-                wb_logger = logging.getLogger("webull")
+
+            # ================= [核武器级静音补丁 Start] =================
+            # 既然 SDK 喜欢在初始化时乱动日志配置，我们就用 logging.disable 强行压制。
+            # 这行代码的意思是：暂时禁用所有 INFO (20) 及以下级别的日志。
+            # 这样，SDK 初始化期间产生的所有 INFO 噪音都会被 Python 解释器直接丢弃。
+            # (注：WARNING 级别的日志依然会被放行，符合您的需求)
+            previous_disable_level = logging.root.manager.disable
+            logging.disable(logging.INFO)
+            # ==========================================================
+
+            try:
+                # 1. 初始化 SDK (此时所有 INFO 日志都会消失)
+                self.api_client = ApiClient(self.app_key, self.app_secret, self.region_id)
+                self.api_client.add_endpoint(self.region_id, "api.webull.com")
+                self.trade_client = TradeClient(self.api_client)
+            finally:
+                # ================= [恢复现场] =================
+                # SDK 初始化完了，必须恢复全局日志功能，否则 Janus 自己的日志也看不到了
+                logging.disable(previous_disable_level)
+                # ============================================
+
+            # 2. 战场打扫 (Cleanup)
+            # 虽然我们拦截了初始化时的日志，但 SDK 可能留下了“私有 Handler”。
+            # 为了防止未来的日志（如订单回调）格式乱掉，我们需要把这些 Handler 拆除。
+            def cleanup_webull_loggers():
+                # 找出所有 webull 相关的 logger（包括子模块）
+                webull_loggers = [logging.getLogger(name) for name in logging.root.manager.loggerDict if name.startswith("webull")]
+                webull_loggers.append(logging.getLogger("webull")) # 加上根节点
                 
-                # 1. 级别压制：只许报忧，不许报喜 (屏蔽 INFO)
-                wb_logger.setLevel(logging.WARNING)
-                
-                # 2. 掐断传播：禁止日志向上冒泡到 Root Logger (解决重复日志)
-                wb_logger.propagate = False
-                
-                # 3. 暴力拆除：移除 Webull 自己偷偷加的所有 Handler (解决特殊格式日志)
-                if wb_logger.hasHandlers():
-                    wb_logger.handlers.clear()
+                for logger in webull_loggers:
+                    logger.setLevel(logging.WARNING) # 锁定为 WARNING
+                    logger.propagate = False         # 禁止冒泡
+                    if logger.hasHandlers():
+                        logger.handlers.clear()      # 拆除私有 Handler
 
-            # 第一次静音：防止 SDK 模块 import 时产生的 Handler 捣乱
-            silence_webull()
-            # ================= [强力静音补丁 End] =================
+            cleanup_webull_loggers()
 
-            # 1. 初始化 SDK
-            # (Webull 在这里面可能会重新添加 Handler 或重置 Level)
-            self.api_client = ApiClient(self.app_key, self.app_secret, self.region_id)
-            
-            # ================= [强力静音补丁 Again] =================
-            # 第二次静音：SDK 初始化完了，如果它刚才不听话又加了 Handler，现在再次杀掉
-            silence_webull()
-            # ================= [强力静音补丁 End] =================
-
-            self.api_client.add_endpoint(self.region_id, "api.webull.com")
-            
-            self.trade_client = TradeClient(self.api_client)
-
-            # 2. 获取账户
+            # 3. 获取账户
             self.on_log("正在获取账户列表...")
             resp = self.trade_client.account_v2.get_account_list()
             
@@ -110,7 +111,7 @@ class WebullOfficialGateway(BaseGateway):
             
             self.on_log(f"连接成功! 账户 ID: {self.account_id}")
 
-            # 3. 启动轮询
+            # 4. 启动轮询
             self.active = True
             self.poll_thread = threading.Thread(target=self._polling_loop)
             self.poll_thread.start()
@@ -119,7 +120,7 @@ class WebullOfficialGateway(BaseGateway):
             self.on_log(f"连接异常: {e}")
             import traceback
             traceback.print_exc()
-
+    
     def send_order(self, req: OrderRequest) -> str:
         if not self.trade_client:
             return ""
