@@ -122,6 +122,13 @@ class WebullOfficialGateway(BaseGateway):
             traceback.print_exc()
     
     def send_order(self, req: OrderRequest) -> str:
+        # ================= [RPC 兼容性修复 Start] =================
+        # 如果 req 是字典 (dict)，说明是通过 RPC 传来的
+        # 我们需要把它转换回标准的 OrderRequest 对象，否则 req.symbol 会报错
+        if isinstance(req, dict):
+            req = OrderRequest(**req)
+        # ================= [RPC 兼容性修复 End] =================
+
         if not self.trade_client:
             return ""
         
