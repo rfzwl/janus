@@ -1,6 +1,7 @@
 import logging
 import threading
 import time
+import uuid
 from typing import Any, Dict, Optional
 
 # 只保留核心和交易模块
@@ -132,32 +133,44 @@ class WebullOfficialGateway(BaseGateway):
         if not self.trade_client:
             return ""
         
-        if not req.symbol.isdigit():
-            self.on_log(f"下单失败: MVP版本不支持代码查询。请直接输入TickerID数字 (例如 AAPL=913256135)")
-            return ""
-        
-        ticker_id = int(req.symbol)
-
         params = {
-            "tickerId": ticker_id,
-            "action": DIRECTION_VT2WB.get(req.direction, 'BUY'),
-            "orderType": 'LMT' if req.type == OrderType.LIMIT else 'MKT',
-            "timeInForce": "GTC",
-            "quantity": int(req.volume)
+            "client_order_id": str(uuid.uuid4().hex),
+            "combo_type": "NORMAL",
+            "symbol": req.symbol.upper(),
+            "instrument_type": "EQUITY",
+            "market": "US",
+            "side": DIRECTION_VT2WB.get(req.direction, 'BUY'),
+            "order_type": 'LMT' if req.type == OrderType.LIMIT else 'MKT',
+            "quantity": str(int(req.volume)),
+            "time_in_force": "DAY",
+            "entrust_type": "QTY",
+            "support_trading_session": "N",
         }
         if req.type == OrderType.LIMIT:
-            params["lmtPrice"] = str(req.price)
+            params["limit_price"] = str(req.price)
 
         try:
             # 转义花括号，防止 Loguru 崩溃 (保留此防御措施)
             safe_params = str(params).replace("{", "{{").replace("}", "}}")
-            self.on_log(f"发送订单: {safe_params}")
-            resp = self.trade_client.trade.place_order(self.account_id, params)
+            self.on_log(f"发送V2订单: {safe_params}")
+            resp = self.trade_client.order_v2.place_order(
+                account_id=self.account_id,
+                new_orders=[params],
+            )
             
             if resp.status_code == 200:
                 data = resp.json()
                 order_data = data.get('data', data)
-                wb_order_id = str(order_data.get('orderId'))
+                if isinstance(order_data, list) and order_data:
+                    order_data = order_data[0]
+                wb_order_id = str(
+                    order_data.get('order_id')
+                    or order_data.get('orderId')
+                    or order_data.get('id', '')
+                )
+                if not wb_order_id:
+                    self.on_log(f"下单失败: 无法从回执获取订单号: {data}")
+                    return ""
                 
                 order = req.create_order_data(wb_order_id, self.gateway_name)
                 order.status = Status.NOTTRADED
