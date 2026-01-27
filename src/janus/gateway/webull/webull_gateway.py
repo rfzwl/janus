@@ -1,3 +1,4 @@
+import logging
 import threading
 import time
 from typing import Any, Dict, Optional
@@ -53,9 +54,12 @@ class WebullOfficialGateway(BaseGateway):
 
         try:
             self.on_log("正在连接 Webull Open API (Trade Only)...")
-            
+
+            logging.getLogger("webull").setLevel(logging.WARNING)
+
             # 1. 初始化 SDK
             self.api_client = ApiClient(self.app_key, self.app_secret, self.region_id)
+            logging.getLogger("webull").setLevel(logging.WARNING)
             self.api_client.add_endpoint(self.region_id, "api.webull.com")
             
             self.trade_client = TradeClient(self.api_client)
