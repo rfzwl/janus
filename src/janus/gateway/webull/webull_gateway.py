@@ -123,64 +123,81 @@ class WebullOfficialGateway(BaseGateway):
             traceback.print_exc()
     
     def send_order(self, req: OrderRequest) -> str:
-        # ================= [RPC 兼容性修复 Start] =================
-        # 如果 req 是字典 (dict)，说明是通过 RPC 传来的
-        # 我们需要把它转换回标准的 OrderRequest 对象，否则 req.symbol 会报错
+        # [RPC 兼容] 字典转对象
         if isinstance(req, dict):
             req = OrderRequest(**req)
-        # ================= [RPC 兼容性修复 End] =================
 
         if not self.trade_client:
             return ""
-        
+
+        # 1. 价格处理
+        lmt_price = str(req.price)
+
+        # 2. 映射 OrderType (V2 接口必须用全称!)
+        # V1: LMT, MKT
+        # V2: LIMIT, MARKET
+        wb_order_type = "LIMIT"
+        if req.type == OrderType.MARKET:
+            wb_order_type = "MARKET"
+        elif req.type == OrderType.STOP:
+            wb_order_type = "STOP"
+
+        # 3. 构造参数字典
         params = {
-            "client_order_id": str(uuid.uuid4().hex),
+            "client_order_id": uuid.uuid4().hex,
             "combo_type": "NORMAL",
             "symbol": req.symbol.upper(),
             "instrument_type": "EQUITY",
             "market": "US",
             "side": DIRECTION_VT2WB.get(req.direction, 'BUY'),
-            "order_type": 'LMT' if req.type == OrderType.LIMIT else 'MKT',
+            "order_type": wb_order_type,
             "quantity": str(int(req.volume)),
             "time_in_force": "DAY",
             "entrust_type": "QTY",
             "support_trading_session": "N",
         }
+
+        # 4. 补充限价参数
         if req.type == OrderType.LIMIT:
-            params["limit_price"] = str(req.price)
+            params["limit_price"] = lmt_price
 
         try:
-            # 转义花括号，防止 Loguru 崩溃 (保留此防御措施)
+            # 日志脱敏
             safe_params = str(params).replace("{", "{{").replace("}", "}}")
-            self.on_log(f"发送V2订单: {safe_params}")
+            self.on_log(f"发送订单(V2): {safe_params}")
+
             resp = self.trade_client.order_v2.place_order(
                 account_id=self.account_id,
                 new_orders=[params],
             )
-            
+
             if resp.status_code == 200:
                 data = resp.json()
-                order_data = data.get('data', data)
-                if isinstance(order_data, list) and order_data:
-                    order_data = order_data[0]
-                wb_order_id = str(
-                    order_data.get('order_id')
-                    or order_data.get('orderId')
-                    or order_data.get('id', '')
-                )
+
+                # 解析 Order ID
+                wb_order_id = ""
+                raw_data = data.get("data", data)
+                if isinstance(raw_data, list) and len(raw_data) > 0:
+                    wb_order_id = str(raw_data[0].get("orderId", ""))
+                elif isinstance(raw_data, dict):
+                    wb_order_id = str(raw_data.get("orderId", ""))
+
                 if not wb_order_id:
-                    self.on_log(f"下单失败: 无法从回执获取订单号: {data}")
-                    return ""
-                
+                    wb_order_id = params["client_order_id"]
+
                 order = req.create_order_data(wb_order_id, self.gateway_name)
                 order.status = Status.NOTTRADED
                 self.on_order(order)
+
                 return order.vt_orderid
             else:
-                self.on_log(f"Webull 拒单: {resp.text}")
+                self.on_log(f"Webull 拒单: {resp.status_code} {resp.text}")
                 return ""
+
         except Exception as e:
             self.on_log(f"下单异常: {e}")
+            import traceback
+            traceback.print_exc()
             return ""
 
     def cancel_order(self, req: CancelRequest):
