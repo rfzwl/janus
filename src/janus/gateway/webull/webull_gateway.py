@@ -54,12 +54,37 @@ class WebullOfficialGateway(BaseGateway):
 
         try:
             self.on_log("正在连接 Webull Open API (Trade Only)...")
+            
+            # ================= [强力静音补丁 Start] =================
+            # 定义一个内部函数，专门用来清理 Webull 的日志污染
+            # 这里的目的是防止 Webull SDK 的 INFO 级别日志刷屏并导致系统崩溃
+            def silence_webull():
+                # 获取 webull 的总舵主 logger
+                wb_logger = logging.getLogger("webull")
+                
+                # 1. 级别压制：只许报忧，不许报喜 (屏蔽 INFO)
+                wb_logger.setLevel(logging.WARNING)
+                
+                # 2. 掐断传播：禁止日志向上冒泡到 Root Logger (解决重复日志)
+                wb_logger.propagate = False
+                
+                # 3. 暴力拆除：移除 Webull 自己偷偷加的所有 Handler (解决特殊格式日志)
+                if wb_logger.hasHandlers():
+                    wb_logger.handlers.clear()
 
-            logging.getLogger("webull").setLevel(logging.WARNING)
+            # 第一次静音：防止 SDK 模块 import 时产生的 Handler 捣乱
+            silence_webull()
+            # ================= [强力静音补丁 End] =================
 
             # 1. 初始化 SDK
+            # (Webull 在这里面可能会重新添加 Handler 或重置 Level)
             self.api_client = ApiClient(self.app_key, self.app_secret, self.region_id)
-            logging.getLogger("webull").setLevel(logging.WARNING)
+            
+            # ================= [强力静音补丁 Again] =================
+            # 第二次静音：SDK 初始化完了，如果它刚才不听话又加了 Handler，现在再次杀掉
+            silence_webull()
+            # ================= [强力静音补丁 End] =================
+
             self.api_client.add_endpoint(self.region_id, "api.webull.com")
             
             self.trade_client = TradeClient(self.api_client)
@@ -116,7 +141,7 @@ class WebullOfficialGateway(BaseGateway):
             params["lmtPrice"] = str(req.price)
 
         try:
-            # 【关键修复】转义花括号，防止 Loguru 崩溃
+            # 转义花括号，防止 Loguru 崩溃 (保留此防御措施)
             safe_params = str(params).replace("{", "{{").replace("}", "}}")
             self.on_log(f"发送订单: {safe_params}")
             resp = self.trade_client.trade.place_order(self.account_id, params)
