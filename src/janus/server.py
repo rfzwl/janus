@@ -1,5 +1,6 @@
 import sys
 import logging
+from vnpy.trader.object import LogData
 from threading import Event
 
 from vnpy.event import EventEngine
@@ -10,7 +11,7 @@ from vnpy_rpcservice import RpcServiceApp
 from .gateway.webull.webull_gateway import WebullOfficialGateway
 from .config import ConfigLoader
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(level=logging.WARNING, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 sys_logger = logging.getLogger("JanusBootstrap")
 
 class JanusServer:
@@ -36,13 +37,35 @@ class JanusServer:
         self.rpc_engine.server.register(self.remote_exit)
 
     def _sanitize_log_event(self, event) -> None:
-        log_data = getattr(event, "data", None)
-        if not log_data or not hasattr(log_data, "msg"):
-            return
-        try:
-            log_data.msg = str(log_data.msg).replace("{", "{{").replace("}", "}}")
-        except Exception:
-            pass
+        """
+        修复日志事件数据的格式问题。
+        这是一个"中间人"函数，在日志交给 MainEngine 处理前先清洗一遍。
+        """
+        data = event.data
+
+        # --- 修复 1: 解决 AttributeError (崩溃元凶) ---
+        # 如果数据是纯字符串 (通常由 Loguru 拦截 Webull 日志产生)
+        if isinstance(data, str):
+            # 原地将 event.data 替换为标准的 LogData 对象
+            # 这样 MainEngine 收到后就能正常读取 .level 属性了
+            event.data = LogData(
+                msg=data,
+                gateway_name="WebullSDK",
+                level=logging.INFO
+            )
+            return  # 处理完毕，直接返回
+
+        # --- 修复 2: 解决 KeyError (Loguru 格式化错误) ---
+        # 如果数据已经是 LogData，但内容里包含花括号 { }
+        # (通常是 Webull 打印了字典类型的调试信息)
+        if isinstance(data, LogData):
+            try:
+                # 将 { 转义为 {{，将 } 转义为 }}
+                # 这样 Loguru 就会把它当做普通字符，而不是格式化占位符
+                if "{" in str(data.msg):
+                    data.msg = str(data.msg).replace("{", "{{").replace("}", "}}")
+            except Exception:
+                pass
 
     def remote_exit(self):
         """
