@@ -1,7 +1,7 @@
 import sys
 import logging
 from vnpy.trader.object import LogData
-from threading import Event
+from threading import Event, Thread
 
 from vnpy.event import EventEngine
 from vnpy.trader.engine import MainEngine
@@ -76,6 +76,36 @@ class JanusServer:
         self.stop_event.set()
         return "Server is shutting down..."
 
+    def _start_webull_summary(self) -> None:
+        def worker():
+            import time
+
+            time.sleep(3)
+            try:
+                accounts = self.main_engine.get_all_accounts()
+                positions = self.main_engine.get_all_positions()
+            except Exception as exc:
+                sys_logger.warning("Failed to read Webull account summary.", exc_info=exc)
+                return
+
+            if not accounts:
+                return
+
+            acc = accounts[0]
+            cash = acc.balance - acc.frozen
+
+            summary = (
+                f"\n{'='*30}\n"
+                f"账户连接成功！\n"
+                f"账户总额: {acc.balance:.2f}\n"
+                f"现金余额: {cash:.2f}\n"
+                f"当前持仓数量: {len(positions)} 个\n"
+                f"{'='*30}"
+            )
+            self.main_engine.write_log(summary)
+
+        Thread(target=worker, name="WebullSummary", daemon=True).start()
+
     def run(self):
         sys_logger.info("Starting Janus Server ...")
         
@@ -83,6 +113,7 @@ class JanusServer:
         wb_setting = self.config.get_webull_setting()
         if wb_setting.get("app_key"):
             self.main_engine.connect(wb_setting, "WEBULL")
+            self._start_webull_summary()
         else:
             self.main_engine.write_log("WARNING: No Webull config found in config.yaml!")
         
