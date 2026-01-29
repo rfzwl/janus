@@ -25,3 +25,7 @@ class ConfigLoader:
             "rep_address": "tcp://*:2014",
             "pub_address": "tcp://*:4102"
         })
+
+    def get_history_setting(self) -> str:
+        """获取历史记录文件路径，默认为当前目录下的 .janus_history"""
+        return self.config.get("history_file", ".janus_history")

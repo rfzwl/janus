@@ -82,7 +82,6 @@ class JanusRpcClient(RpcClient):
                 "offset": Offset.OPEN 
             }
             
-            # 【关键修复】增加第二个参数 "WEBULL"
             order_id = self.send_order(req, "WEBULL")
             self.log_callback(f"Order sent: {order_id}")
             
@@ -100,10 +99,10 @@ class JanusRpcClient(RpcClient):
 def main():
     client = JanusRpcClient()
     rpc_conf = client.config.get_rpc_setting()
+    history_file = client.config.get_history_setting() # 获取配置的路径
     
-    # 【关键修复】将 bind 地址 (*) 转换为 connect 地址 (localhost)
     req_addr = rpc_conf["rep_address"].replace("*", "localhost")
-    sub_addr = rpc_conf["pub_address"].replace("*", "localhost") # 对应服务端的 PUB
+    sub_addr = rpc_conf["pub_address"].replace("*", "localhost")
 
     print(f"Connecting to RPC at {req_addr}...")
     
@@ -114,7 +113,8 @@ def main():
         sub_address=sub_addr 
     )
     
-    tui = JanusTUI(client)
+    # 将历史记录路径传给 TUI
+    tui = JanusTUI(client, history_path=history_file)
     client.tui = tui 
     
     try:
