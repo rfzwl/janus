@@ -4,10 +4,11 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
-# 只保留核心和交易模块
+# Webull SDK
 from webull.core.client import ApiClient
 from webull.trade.trade_client import TradeClient
 
+# vn.py 基础组件
 from vnpy.trader.gateway import BaseGateway
 from vnpy.trader.object import (
     SubscribeRequest, OrderRequest, CancelRequest,
@@ -25,7 +26,8 @@ DIRECTION_VT2WB = {
 
 class WebullOfficialGateway(BaseGateway):
     """
-    Webull Official Open API Gateway (No Quotes MVP)
+    Webull Official Open API Gateway
+    实现了资金查询、持仓查询、委托交易和状态轮询。
     """
     default_name = "WEBULL"
 
@@ -42,8 +44,12 @@ class WebullOfficialGateway(BaseGateway):
         
         self.active = False
         self.poll_thread = None
-        self.query_interval = 2
+        self.query_interval = 2  # 轮询间隔(秒)
+
     def connect(self, setting: Dict[str, Any]):
+        """
+        连接 Webull 交易服务器
+        """
         self.app_key = setting.get("app_key", "")
         self.app_secret = setting.get("app_secret", "")
         self.region_id = setting.get("region_id", "us")
@@ -55,43 +61,25 @@ class WebullOfficialGateway(BaseGateway):
         try:
             self.on_log("正在连接 Webull Open API (Trade Only)...")
 
-            # ================= [核武器级静音补丁 Start] =================
-            # 既然 SDK 喜欢在初始化时乱动日志配置，我们就用 logging.disable 强行压制。
-            # 这行代码的意思是：暂时禁用所有 INFO (20) 及以下级别的日志。
-            # 这样，SDK 初始化期间产生的所有 INFO 噪音都会被 Python 解释器直接丢弃。
-            # (注：WARNING 级别的日志依然会被放行，符合您的需求)
+            # ================= [日志静音处理] =================
+            # 屏蔽 SDK 初始化过程中的 INFO 日志噪音
             previous_disable_level = logging.root.manager.disable
             logging.disable(logging.INFO)
-            # ==========================================================
+            # ================================================
 
             try:
-                # 1. 初始化 SDK (此时所有 INFO 日志都会消失)
+                # 1. 初始化 SDK
                 self.api_client = ApiClient(self.app_key, self.app_secret, self.region_id)
                 self.api_client.add_endpoint(self.region_id, "api.webull.com")
                 self.trade_client = TradeClient(self.api_client)
             finally:
-                # ================= [恢复现场] =================
-                # SDK 初始化完了，必须恢复全局日志功能，否则 Janus 自己的日志也看不到了
+                # 恢复日志
                 logging.disable(previous_disable_level)
-                # ============================================
 
-            # 2. 战场打扫 (Cleanup)
-            # 虽然我们拦截了初始化时的日志，但 SDK 可能留下了“私有 Handler”。
-            # 为了防止未来的日志（如订单回调）格式乱掉，我们需要把这些 Handler 拆除。
-            def cleanup_webull_loggers():
-                # 找出所有 webull 相关的 logger（包括子模块）
-                webull_loggers = [logging.getLogger(name) for name in logging.root.manager.loggerDict if name.startswith("webull")]
-                webull_loggers.append(logging.getLogger("webull")) # 加上根节点
-                
-                for logger in webull_loggers:
-                    logger.setLevel(logging.WARNING) # 锁定为 WARNING
-                    logger.propagate = False         # 禁止冒泡
-                    if logger.hasHandlers():
-                        logger.handlers.clear()      # 拆除私有 Handler
+            # 2. 清理 SDK 残留的 Logger Handler
+            self._cleanup_webull_loggers()
 
-            cleanup_webull_loggers()
-
-            # 3. 获取账户
+            # 3. 获取账户列表
             self.on_log("正在获取账户列表...")
             resp = self.trade_client.account_v2.get_account_list()
             
@@ -100,19 +88,24 @@ class WebullOfficialGateway(BaseGateway):
                 return
 
             data = resp.json()
-            # 兼容 list 或 dict
             acct_list = data if isinstance(data, list) else data.get('data', [])
             
             if not acct_list:
                 self.on_log("未找到有效账户")
                 return
 
+            # 获取第一个账户 ID
             first_acct = acct_list[0]
             self.account_id = str(first_acct.get("account_id") or first_acct.get("secAccountId"))
             
             self.on_log(f"连接成功! 账户 ID: {self.account_id}")
 
-            # 4. 启动轮询
+            # 4. 初始化查询 (资金、持仓、订单)
+            self.query_account()
+            self.query_position()
+            self._poll_orders()
+
+            # 5. 启动轮询线程
             self.active = True
             self.poll_thread = threading.Thread(target=self._polling_loop)
             self.poll_thread.start()
@@ -123,26 +116,25 @@ class WebullOfficialGateway(BaseGateway):
             traceback.print_exc()
     
     def send_order(self, req: OrderRequest) -> str:
-        # [RPC 兼容] 字典转对象
+        """
+        发送订单 (适配 Webull V2 接口)
+        """
         if isinstance(req, dict):
             req = OrderRequest(**req)
 
         if not self.trade_client:
             return ""
 
-        # 1. 价格处理
+        # 1. 参数准备
         lmt_price = str(req.price)
-
-        # 2. 映射 OrderType (V2 接口必须用全称!)
-        # V1: LMT, MKT
-        # V2: LIMIT, MARKET
+        
+        # 映射 OrderType
         wb_order_type = "LIMIT"
         if req.type == OrderType.MARKET:
             wb_order_type = "MARKET"
         elif req.type == OrderType.STOP:
             wb_order_type = "STOP"
 
-        # 3. 构造参数字典
         params = {
             "client_order_id": uuid.uuid4().hex,
             "combo_type": "NORMAL",
@@ -157,12 +149,11 @@ class WebullOfficialGateway(BaseGateway):
             "support_trading_session": "N",
         }
 
-        # 4. 补充限价参数
         if req.type == OrderType.LIMIT:
             params["limit_price"] = lmt_price
 
         try:
-            # 日志脱敏
+            # 日志脱敏处理
             safe_params = str(params).replace("{", "{{").replace("}", "}}")
             self.on_log(f"发送订单(V2): {safe_params}")
 
@@ -173,9 +164,9 @@ class WebullOfficialGateway(BaseGateway):
 
             if resp.status_code == 200:
                 data = resp.json()
-
-                # 解析 Order ID
                 wb_order_id = ""
+                
+                # 解析 Order ID
                 raw_data = data.get("data", data)
                 if isinstance(raw_data, list) and len(raw_data) > 0:
                     wb_order_id = str(raw_data[0].get("orderId", ""))
@@ -185,6 +176,7 @@ class WebullOfficialGateway(BaseGateway):
                 if not wb_order_id:
                     wb_order_id = params["client_order_id"]
 
+                # 立即推送一个本地状态
                 order = req.create_order_data(wb_order_id, self.gateway_name)
                 order.status = Status.NOTTRADED
                 self.on_order(order)
@@ -201,6 +193,9 @@ class WebullOfficialGateway(BaseGateway):
             return ""
 
     def cancel_order(self, req: CancelRequest):
+        """
+        撤单
+        """
         if not self.trade_client: return
         try:
             self.trade_client.trade.cancel_order(self.account_id, req.orderid)
@@ -208,18 +203,90 @@ class WebullOfficialGateway(BaseGateway):
         except Exception as e:
             self.on_log(f"撤单异常: {e}")
 
-    # --- 必须实现的抽象方法 (Dummy Implementations) ---
-    def subscribe(self, req: SubscribeRequest):
-        pass
-
     def query_account(self):
-        """MVP Dummy Method"""
-        pass
+        """
+        查询账户资金 (基于 account_v2.get_account_balance)
+        """
+        if not self.trade_client: return
+
+        try:
+            resp = self.trade_client.account_v2.get_account_balance(self.account_id)
+            if resp.status_code == 200:
+                data = resp.json()
+                
+                # 获取净资产 (Net Liquidation Value)
+                balance = float(data.get("total_net_liquidation_value", 0))
+                # 获取现金余额 (Total Cash)
+                total_cash = float(data.get("total_cash_balance", 0))
+                
+                # 构造 AccountData
+                # 在 vnpy 中:
+                # balance = 总资产
+                # available = 可用资金
+                # frozen = balance - available (即持仓市值 + 冻结保证金)
+                account = AccountData(
+                    accountid=self.account_id,
+                    balance=balance,
+                    frozen=balance - total_cash,  # 简化计算：非现金资产视为冻结
+                    gateway_name=self.gateway_name
+                )
+                self.on_account(account)
+            else:
+                self.on_log(f"查询资金失败: {resp.status_code}")
+        except Exception as e:
+            self.on_log(f"查询资金异常: {e}")
 
     def query_position(self):
-        """MVP Dummy Method"""
+        """
+        查询持仓 (基于 account_v2.get_account_position)
+        """
+        if not self.trade_client: return
+
+        try:
+            resp = self.trade_client.account_v2.get_account_position(self.account_id)
+            if resp.status_code == 200:
+                raw_data = resp.json()
+                # 兼容不同返回格式 (list 或 dict wrapper)
+                pos_list = []
+                if isinstance(raw_data, list):
+                    pos_list = raw_data
+                elif isinstance(raw_data, dict):
+                    pos_list = raw_data.get("data") or raw_data.get("items") or []
+
+                for item in pos_list:
+                    ticker = item.get("ticker", {})
+                    symbol = ticker.get("symbol")
+                    if not symbol: continue
+
+                    # 持仓数量
+                    volume = float(item.get("position", 0))
+                    
+                    # 判断方向 (简单逻辑: 正数为多)
+                    direction = Direction.LONG
+                    if volume < 0:
+                        direction = Direction.SHORT
+                        volume = abs(volume)
+
+                    pos = PositionData(
+                        symbol=symbol,
+                        exchange=Exchange.SMART,
+                        direction=direction,
+                        volume=volume,
+                        price=float(item.get("costPrice", 0)), # 持仓成本
+                        pnl=float(item.get("unrealizedProfitLoss", 0)), # 未实现盈亏
+                        gateway_name=self.gateway_name
+                    )
+                    self.on_position(pos)
+            else:
+                self.on_log(f"查询持仓失败: {resp.status_code}")
+        except Exception as e:
+            self.on_log(f"查询持仓异常: {e}")
+
+    def subscribe(self, req: SubscribeRequest):
+        """
+        MVP 版本暂不实现实时行情订阅
+        """
         pass
-    # -----------------------------------------------
 
     def close(self):
         self.active = False
@@ -227,19 +294,69 @@ class WebullOfficialGateway(BaseGateway):
             self.poll_thread.join()
 
     def _polling_loop(self):
+        """
+        轮询线程: 定期同步订单、资金和持仓
+        """
+        count = 0
         while self.active:
             try:
+                # 1. 轮询订单 (高频: 每次循环都查)
                 self._poll_orders()
+                
+                # 2. 轮询资金和持仓 (低频: 每5次循环查一次，即约10秒)
+                if count % 5 == 0:
+                    self.query_account()
+                    self.query_position()
+                
+                count += 1
             except Exception as e:
-                pass
+                self.on_log(f"轮询出错: {e}")
+            
             time.sleep(self.query_interval)
 
     def _poll_orders(self):
+        """
+        轮询未完成订单
+        """
         if not self.trade_client: return
         try:
             resp = self.trade_client.trade.get_open_orders(self.account_id)
             if resp.status_code == 200:
-                # 暂时只做空跑，防止报错
-                pass
-        except:
+                data = resp.json()
+                orders_list = data if isinstance(data, list) else data.get("data", [])
+                
+                for item in orders_list:
+                    # 状态映射逻辑需根据实际返回完善，此处简化为 NOTTRADED
+                    status = Status.NOTTRADED
+                    
+                    # 尝试解析 filledQuantity
+                    traded = float(item.get("filledQuantity", 0))
+                    total = float(item.get("totalQuantity", 0))
+                    
+                    if traded > 0:
+                        status = Status.PARTTRADED if traded < total else Status.ALLTRADED
+
+                    order = OrderData(
+                        orderid=str(item.get("orderId")),
+                        symbol=item.get("ticker", {}).get("symbol", ""),
+                        exchange=Exchange.SMART,
+                        price=float(item.get("lmtPrice", 0)),
+                        volume=total,
+                        traded=traded,
+                        status=status,
+                        gateway_name=self.gateway_name
+                    )
+                    self.on_order(order)
+        except Exception:
             pass
+
+    def _cleanup_webull_loggers(self):
+        """清理 webull SDK 自动添加的 log handlers"""
+        webull_loggers = [logging.getLogger(name) for name in logging.root.manager.loggerDict if name.startswith("webull")]
+        webull_loggers.append(logging.getLogger("webull"))
+        
+        for logger in webull_loggers:
+            logger.setLevel(logging.WARNING)
+            logger.propagate = False
+            if logger.hasHandlers():
+                logger.handlers.clear()
