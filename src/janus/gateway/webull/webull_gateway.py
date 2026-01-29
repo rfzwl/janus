@@ -45,6 +45,7 @@ class WebullOfficialGateway(BaseGateway):
         self.active = False
         self.poll_thread = None
         self.query_interval = 2  # 轮询间隔(秒)
+        self._last_position_directions: Dict[str, Direction] = {}
 
     def connect(self, setting: Dict[str, Any]):
         """
@@ -100,10 +101,9 @@ class WebullOfficialGateway(BaseGateway):
             
             self.on_log(f"连接成功! 账户 ID: {self.account_id}")
 
-            # 4. 初始化查询 (资金、持仓、订单)
+            # 4. 初始化查询 (资金、持仓)
             self.query_account()
             self.query_position()
-            self._poll_orders()
 
             # 5. 启动轮询线程
             self.active = True
@@ -240,7 +240,8 @@ class WebullOfficialGateway(BaseGateway):
         """
         查询持仓 (基于 account_v2.get_account_position)
         """
-        if not self.trade_client: return
+        if not self.trade_client:
+            return
 
         try:
             resp = self.trade_client.account_v2.get_account_position(self.account_id)
@@ -253,10 +254,27 @@ class WebullOfficialGateway(BaseGateway):
                 elif isinstance(raw_data, dict):
                     pos_list = raw_data.get("data") or raw_data.get("items") or []
 
+                if not pos_list:
+                    for symbol, direction in self._last_position_directions.items():
+                        pos = PositionData(
+                            symbol=symbol,
+                            exchange=Exchange.SMART,
+                            direction=direction,
+                            volume=0,
+                            price=0,
+                            pnl=0,
+                            gateway_name=self.gateway_name
+                        )
+                        self.on_position(pos)
+                    self._last_position_directions.clear()
+                    return
+
+                latest_positions: Dict[str, Direction] = {}
                 for item in pos_list:
                     ticker = item.get("ticker", {})
                     symbol = ticker.get("symbol")
-                    if not symbol: continue
+                    if not symbol:
+                        continue
 
                     # 持仓数量
                     volume = float(item.get("position", 0))
@@ -267,6 +285,7 @@ class WebullOfficialGateway(BaseGateway):
                         direction = Direction.SHORT
                         volume = abs(volume)
 
+                    latest_positions[symbol] = direction
                     pos = PositionData(
                         symbol=symbol,
                         exchange=Exchange.SMART,
@@ -277,6 +296,7 @@ class WebullOfficialGateway(BaseGateway):
                         gateway_name=self.gateway_name
                     )
                     self.on_position(pos)
+                self._last_position_directions = latest_positions
             else:
                 self.on_log(f"查询持仓失败: {resp.status_code}")
         except Exception as e:
