@@ -1,6 +1,6 @@
 import sys
 import logging
-from threading import Event, Thread
+from threading import Event
 
 from vnpy.event import EventEngine
 from vnpy.trader.engine import MainEngine
@@ -91,42 +91,11 @@ class JanusServer:
         self.stop_event.set()
         return "Server is shutting down..."
 
-    def _start_webull_summary(self) -> None:
-        def worker():
-            import time
-
-            time.sleep(3)
-            try:
-                accounts = self.main_engine.get_all_accounts()
-                positions = self.main_engine.get_all_positions()
-            except Exception as exc:
-                sys_logger.warning("Failed to read Webull account summary.", exc_info=exc)
-                return
-
-            if not accounts:
-                return
-
-            acc = accounts[0]
-            cash = acc.balance - acc.frozen
-
-            summary = (
-                f"\n{'='*30}\n"
-                f"账户连接成功！\n"
-                f"账户总额: {acc.balance:.2f}\n"
-                f"现金余额: {cash:.2f}\n"
-                f"当前持仓数量: {len(positions)} 个\n"
-                f"{'='*30}"
-            )
-            self.main_engine.write_log(summary)
-
-        Thread(target=worker, name="WebullSummary", daemon=True).start()
-
     def run(self):
         sys_logger.info("Starting Janus Server ...")
 
         # 4. 循环连接所有配置的账户
         accounts = self.config.get_all_accounts()
-        webull_connected = False
         for acct_config in accounts:
             broker_type = acct_config.get("broker", "").lower()
             acct_name = acct_config.get("name", "Unknown")
@@ -141,12 +110,6 @@ class JanusServer:
             sys_logger.info(f"Connecting to account: {acct_name} ({broker_type})")
             self.main_engine.add_gateway(gateway_class, acct_name)
             self.main_engine.connect(acct_config, acct_name)
-
-            if broker_type == "webull":
-                webull_connected = True
-
-        if webull_connected:
-            self._start_webull_summary()
 
         # 5. 启动 RPC 服务
         rpc_setting = self.config.get_rpc_setting()
