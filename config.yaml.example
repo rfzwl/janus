@@ -1,9 +1,24 @@
-# config.yaml
-webull:
-  app_key: "key"
-  app_secret: "secret"
-  region_id: "us"
+# Janus 多账户配置文件
 
+# 账户列表
+accounts:
+  - name: "webull_personal"       # 账户别名，用于 CLI 指令
+    broker: "webull"              # 经纪商类型
+    app_key: "YOUR_APP_KEY"
+    app_secret: "YOUR_APP_SECRET"
+    region_id: "us"
+
+  - name: "ib_pro"
+    broker: "ib"
+    host: "127.0.0.1"
+    port: 7497
+    client_id: 1
+
+# RPC 服务配置
 rpc:
   rep_address: "tcp://*:2014"
   pub_address: "tcp://*:4102"
+
+# 默认设置
+default_account: "webull_personal"
+history_file: ".janus_history"

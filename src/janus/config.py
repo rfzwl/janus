@@ -1,7 +1,6 @@
 import yaml
 from pathlib import Path
-from dataclasses import dataclass
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 class ConfigLoader:
     def __init__(self, config_path: str = "config.yaml"):
@@ -9,16 +8,11 @@ class ConfigLoader:
         self.config: Dict[str, Any] = {}
         if self.path.exists():
             with open(self.path, "r") as f:
-                self.config = yaml.safe_load(f)
+                self.config = yaml.safe_load(f) or {}
 
-    def get_webull_setting(self) -> Dict[str, Any]:
-        """Load Official Open API Config"""
-        wb_conf = self.config.get("webull", {})
-        return {
-            "app_key": wb_conf.get("app_key", ""),
-            "app_secret": wb_conf.get("app_secret", ""),
-            "region_id": wb_conf.get("region_id", "us"),
-        }
+    def get_all_accounts(self) -> List[Dict[str, Any]]:
+        """获取所有配置的账户列表"""
+        return self.config.get("accounts", [])
 
     def get_rpc_setting(self) -> Dict[str, str]:
         return self.config.get("rpc", {
@@ -27,5 +21,11 @@ class ConfigLoader:
         })
 
     def get_history_setting(self) -> str:
-        """获取历史记录文件路径，默认为当前目录下的 .janus_history"""
         return self.config.get("history_file", ".janus_history")
+    
+    def get_default_account_name(self) -> str:
+        """获取默认账户名"""
+        if "default_account" in self.config:
+            return self.config["default_account"]
+        accounts = self.get_all_accounts()
+        return accounts[0]["name"] if accounts else ""
