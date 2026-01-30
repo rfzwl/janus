@@ -1,11 +1,11 @@
 import sys
 import logging
-from vnpy.trader.object import LogData
 from threading import Event, Thread
 
 from vnpy.event import EventEngine
 from vnpy.trader.engine import MainEngine
 from vnpy.trader.event import EVENT_LOG
+from vnpy.trader.object import LogData
 from vnpy_rpcservice import RpcServiceApp
 
 from .gateway.webull.webull_gateway import WebullOfficialGateway
@@ -22,11 +22,15 @@ class JanusServer:
         self.main_engine = MainEngine(self.event_engine)
         self.stop_event = Event()
 
-        # 1. 加载 App 和 Gateway
+        # 1. 加载 App
         self.main_engine.add_app(RpcServiceApp)
-        self.main_engine.add_gateway(WebullOfficialGateway)
 
-        # 2. 获取 RPC 引擎
+        # 2. 注册支持的 Gateways
+        self.main_engine.add_gateway(WebullOfficialGateway, "WEBULL")
+        # 未来可以在这里添加其他 Gateway，例如：
+        # self.main_engine.add_gateway(IbGateway, "IB")
+
+        # 3. 获取 RPC 引擎
         self.rpc_engine = self.main_engine.get_engine("RpcService")
         
         if not self.rpc_engine:
@@ -35,6 +39,20 @@ class JanusServer:
             sys.exit(1)
 
         self.rpc_engine.server.register(self.remote_exit)
+        self.rpc_engine.server.register(self.sync_all)
+
+        self.gateway_map = {
+            "WEBULL": WebullOfficialGateway,
+        }
+
+    def sync_all(self):
+        """主动触发所有 Gateway 同步数据"""
+        for gateway_name in self.main_engine.gateways.keys():
+            gateway = self.main_engine.get_gateway(gateway_name)
+            if gateway:
+                gateway.query_account()
+                gateway.query_position()
+        return "Sync request sent to all gateways."
 
     def _sanitize_log_event(self, event) -> None:
         """
@@ -108,16 +126,30 @@ class JanusServer:
 
     def run(self):
         sys_logger.info("Starting Janus Server ...")
-        
-        # 3. 连接 Webull
-        wb_setting = self.config.get_webull_setting()
-        if wb_setting.get("app_key"):
-            self.main_engine.connect(wb_setting, "WEBULL")
+
+        # 4. 循环连接所有配置的账户
+        accounts = self.config.get_all_accounts()
+        webull_connected = False
+        for acct_config in accounts:
+            broker_type = acct_config.get("broker", "").upper()
+            acct_name = acct_config.get("name", "Unknown")
+
+            if broker_type not in self.gateway_map:
+                self.main_engine.write_log(
+                    f"WARNING: Unsupported broker type {broker_type} for account {acct_name}."
+                )
+                continue
+
+            sys_logger.info(f"Connecting to account: {acct_name} ({broker_type})")
+            self.main_engine.connect(acct_config, broker_type)
+
+            if broker_type == "WEBULL":
+                webull_connected = True
+
+        if webull_connected:
             self._start_webull_summary()
-        else:
-            self.main_engine.write_log("WARNING: No Webull config found in config.yaml!")
-        
-        # 4. 启动 RPC 服务
+
+        # 5. 启动 RPC 服务
         rpc_setting = self.config.get_rpc_setting()
         try:
             self.rpc_engine.start(
@@ -131,7 +163,7 @@ class JanusServer:
             sys_logger.error(f"Failed to start RPC service: {e}")
             self.shutdown()
         
-        # 5. 主循环
+        # 6. 主循环
         try:
             while not self.stop_event.is_set():
                 self.stop_event.wait(1.0)
