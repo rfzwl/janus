@@ -11,7 +11,7 @@ class ConfigLoader:
                 self.config = yaml.safe_load(f) or {}
 
     def get_all_accounts(self) -> List[Dict[str, Any]]:
-        """获取所有配置的账户列表"""
+        """获取所有配置的账户列表（包含 name/broker 等字段）"""
         return self.config.get("accounts", [])
 
     def get_rpc_setting(self) -> Dict[str, str]:
