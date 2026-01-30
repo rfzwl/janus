@@ -13,6 +13,7 @@ class JanusRpcClient(RpcClient):
     def __init__(self):
         super().__init__()
         self.config = ConfigLoader()
+        self.default_gateway = self._resolve_default_gateway()
         self.orders: Dict[str, OrderData] = {}
         self.log_callback: Callable[[str], None] = lambda x: print(x) 
         self.tui = None
@@ -82,7 +83,7 @@ class JanusRpcClient(RpcClient):
                 "offset": Offset.OPEN 
             }
             
-            order_id = self.send_order(req, "WEBULL")
+            order_id = self.send_order(req, self.default_gateway)
             self.log_callback(f"Order sent: {order_id}")
             
         except Exception as e:
@@ -95,6 +96,10 @@ class JanusRpcClient(RpcClient):
                 print(res)
         except Exception as e:
             print(f"Remote exit failed: {e}")
+
+    def _resolve_default_gateway(self) -> str:
+        default_gateway = self.config.get_default_account_name()
+        return default_gateway or "WEBULL"
 
 def main():
     client = JanusRpcClient()
