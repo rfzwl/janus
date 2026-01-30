@@ -1,0 +1,9 @@
+# config.yaml
+webull:
+  app_key: "key"
+  app_secret: "secret"
+  region_id: "us"
+
+rpc:
+  rep_address: "tcp://*:2014"
+  pub_address: "tcp://*:4102"
