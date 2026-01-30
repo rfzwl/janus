@@ -104,12 +104,11 @@ class WebullOfficialGateway(BaseGateway):
             # 4. 初始化查询 (资金、持仓)
             self.query_account()
             self.query_position()
-            self._push_account_summary()
 
-            # 5. 启动轮询线程
-            self.active = True
-            self.poll_thread = threading.Thread(target=self._polling_loop)
-            self.poll_thread.start()
+            # 5. 暂时禁用轮询线程 (准备转向事件驱动)
+            # self.active = True
+            # self.poll_thread = threading.Thread(target=self._polling_loop)
+            # self.poll_thread.start()
 
         except Exception as e:
             self.on_log(f"连接异常: {e}")
@@ -206,7 +205,7 @@ class WebullOfficialGateway(BaseGateway):
 
     def query_account(self):
         """
-        查询账户资金 (基于 account_v2.get_account_balance)
+        查询账户资金并推送日志总结
         """
         if not self.trade_client: return
 
@@ -232,6 +231,15 @@ class WebullOfficialGateway(BaseGateway):
                     gateway_name=self.gateway_name
                 )
                 self.on_account(account)
+
+                summary = (
+                    f"\n{'='*30}\n"
+                    f"[{self.gateway_name}] 账户同步完成！\n"
+                    f"账户总额: {balance:.2f}\n"
+                    f"现金余额: {total_cash:.2f}\n"
+                    f"{'='*30}"
+                )
+                self.on_log(summary)
             else:
                 self.on_log(f"查询资金失败: {resp.status_code}")
         except Exception as e:
@@ -302,32 +310,6 @@ class WebullOfficialGateway(BaseGateway):
                 self.on_log(f"查询持仓失败: {resp.status_code}")
         except Exception as e:
             self.on_log(f"查询持仓异常: {e}")
-
-    def _push_account_summary(self) -> None:
-        """概括当前账户持仓、总额和现金"""
-        if not self.trade_client:
-            return
-
-        try:
-            resp = self.trade_client.account_v2.get_account_balance(self.account_id)
-            if resp.status_code != 200:
-                self.on_log(f"查询资金失败: {resp.status_code}")
-                return
-
-            data = resp.json()
-            balance = float(data.get("total_net_liquidation_value", 0))
-            cash = float(data.get("total_cash_balance", 0))
-
-            summary = (
-                f"\n{'='*30}\n"
-                f"[{self.gateway_name}] 账户同步完成！\n"
-                f"账户总额: {balance:.2f}\n"
-                f"现金余额: {cash:.2f}\n"
-                f"{'='*30}"
-            )
-            self.on_log(summary)
-        except Exception as exc:
-            self.on_log(f"账户总结异常: {exc}")
 
     def subscribe(self, req: SubscribeRequest):
         """
