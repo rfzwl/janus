@@ -19,24 +19,24 @@ Designed as a modern **OEMS (Order Execution Management System)** console, Janus
 ```mermaid
 graph TD
     subgraph "Server Side (vn.py Process)"
-        A[vn.py Event Engine]
-        B[Broker Gateways] -->|Webull/IB/Moomoo/E-Trade| M[Market]
-        C[RpcService (Server)]
-        S[vn.py Strategy Engine]
-        A <--> B
-        A <--> C
-        A <--> S
+        A[vn.py Event Engine];
+        B[Broker Gateways] -->|Webull/IB/Moomoo/E-Trade| M[Market];
+        C[RpcService Server];
+        S[vn.py Strategy Engine];
+        A <--> B;
+        A <--> C;
+        A <--> S;
     end
 
     subgraph "Client Side (Janus Terminal)"
-        D[RpcService (Client)]
-        E[REPL Interface (prompt_toolkit)]
-        F[Live Dashboard (Rich TUI)]
-        
-        D <==>|ZMQ / TCP| C
-        E -->|Order/Strategy Request| D
-        D -->|Push: Tick/Order/Account| F
-        D -->|Push: Log/Notification| E
+        D[RpcService Client];
+        E[REPL Interface (prompt_toolkit)];
+        F[Live Dashboard (Rich TUI)];
+
+        D <==>|ZMQ / TCP| C;
+        E -->|Order/Strategy Request| D;
+        D -->|Push: Tick/Order/Account| F;
+        D -->|Push: Log/Notification| E;
     end
 ```
 
@@ -65,4 +65,3 @@ Janus provides a flexible command system for managing multiple accounts from a s
 1. **Configuration**: Define your broker credentials and gateway settings in `config.yaml`.
 2. **Start Server**: Run `python -m janus.server`. The server initializes all configured broker connections.
 3. **Start Client**: Run `python -m janus.client`. The client subscribes to all server-side event streams on connect.
-
