@@ -2,17 +2,17 @@
 
 # 账户列表
 accounts:
-  - name: "webull_personal"       # 账户别名，用于 CLI 指令
-    broker: "webull"              # 经纪商类型
+  - name: "webull_personal"       # 唯一实例别名 (Gateway Name)
+    broker: "webull"              # 经纪商类型 (决定使用哪个 Gateway 类)
     app_key: "YOUR_APP_KEY"
     app_secret: "YOUR_APP_SECRET"
     region_id: "us"
 
-  - name: "ib_pro"
-    broker: "ib"
-    host: "127.0.0.1"
-    port: 7497
-    client_id: 1
+  - name: "webull_work"           # 另一个 Webull 账户
+    broker: "webull"
+    app_key: "YOUR_APP_KEY"
+    app_secret: "YOUR_APP_SECRET"
+    region_id: "us"
 
 # RPC 服务配置
 rpc:

@@ -25,10 +25,11 @@ class JanusServer:
         # 1. 加载 App
         self.main_engine.add_app(RpcServiceApp)
 
-        # 2. 注册支持的 Gateways
-        self.main_engine.add_gateway(WebullOfficialGateway, "WEBULL")
-        # 未来可以在这里添加其他 Gateway，例如：
-        # self.main_engine.add_gateway(IbGateway, "IB")
+        # 2. 注册 Gateway 类 (Map 结构)
+        self.broker_map = {
+            "webull": WebullOfficialGateway,
+            # "ib": IbGateway,
+        }
 
         # 3. 获取 RPC 引擎
         self.rpc_engine = self.main_engine.get_engine("RpcService")
@@ -40,10 +41,6 @@ class JanusServer:
 
         self.rpc_engine.server.register(self.remote_exit)
         self.rpc_engine.server.register(self.sync_all)
-
-        self.gateway_map = {
-            "WEBULL": WebullOfficialGateway,
-        }
 
     def sync_all(self):
         """主动触发所有 Gateway 同步数据"""
@@ -131,19 +128,21 @@ class JanusServer:
         accounts = self.config.get_all_accounts()
         webull_connected = False
         for acct_config in accounts:
-            broker_type = acct_config.get("broker", "").upper()
+            broker_type = acct_config.get("broker", "").lower()
             acct_name = acct_config.get("name", "Unknown")
 
-            if broker_type not in self.gateway_map:
+            gateway_class = self.broker_map.get(broker_type)
+            if not gateway_class:
                 self.main_engine.write_log(
                     f"WARNING: Unsupported broker type {broker_type} for account {acct_name}."
                 )
                 continue
 
             sys_logger.info(f"Connecting to account: {acct_name} ({broker_type})")
-            self.main_engine.connect(acct_config, broker_type)
+            self.main_engine.add_gateway(gateway_class, acct_name)
+            self.main_engine.connect(acct_config, acct_name)
 
-            if broker_type == "WEBULL":
+            if broker_type == "webull":
                 webull_connected = True
 
         if webull_connected:
