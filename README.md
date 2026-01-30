@@ -4,7 +4,7 @@
 
 **Janus** is a lightweight, distributed asset management terminal and middleware built on top of **[vn.py](https://github.com/vnpy/vnpy)**.
 
-Designed as a modern **OEMS (Order Execution Management System)** console, Janus connects to multiple underlying trading nodes (gateways) via RPC. It provides a unified **REPL (Read-Eval-Print Loop)** interface that allows traders to monitor various broker accounts in real-time and execute manual interventions across different platforms from a single terminal.
+Designed as a modern **OEMS (Order Execution Management System)** console, Janus connects to multiple underlying trading nodes (gateways). It provides a unified **REPL (Read-Eval-Print Loop)** interface that allows traders to monitor various broker accounts in real-time and execute manual interventions across different platforms from a single terminal.
 
 ## 🎯 Project Positioning
 
@@ -66,9 +66,3 @@ Janus provides a flexible command system for managing multiple accounts from a s
 2. **Start Server**: Run `python -m janus.server`. The server initializes all configured broker connections.
 3. **Start Client**: Run `python -m janus.client`. The client subscribes to all server-side event streams on connect.
 
-## ❓ Clarifications / Open Questions
-
-- **Configuration location**: Is `config.yaml` expected in the project root, user home directory, or a specific config
-  path (e.g., `~/.config/janus/config.yaml`)? If there is a default path, documenting it will reduce setup friction.
-- **Python/vn.py requirements**: If there are pinned versions (Python, vn.py, gateway dependencies), listing them here
-  will make environment setup clearer.
