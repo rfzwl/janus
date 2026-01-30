@@ -38,32 +38,37 @@ graph TD
         D -->|Push: Tick/Order/Account| F
         D -->|Push: Log/Notification| E
     end
-[Command](Command) Interface
+```
+
+## 🧭 Command Interface
+
 Janus provides a flexible command system for managing multiple accounts from a single session:
 
-Broker Context: Use broker <name> (e.g., broker webull) to set the default account for subsequent commands.
+- **Broker context**: Use `broker <name>` (e.g., `broker webull`) to set the default account for subsequent commands.
+- **Targeted commands**: Commands like `buy`, `sell`, or `cancel` target the current default broker context.
 
-Targeted Commands: Commands like buy, sell, or cancel target the current default broker context.
+**Core commands**
 
-Core Commands:
+- `buy/sell/short/cover <symbol> <volume> <price>`: Place orders on the active broker.
+- `cancel <vt_orderid>`: Cancel an existing order.
+- `broker <name>`: Switch the current default broker context.
+- `sync`: Manual data refresh. Triggers the Janus Server to proactively request a full data update (Account & Positions)
+  from all active Broker Gateways. Use this to ensure the TUI display is aligned with the broker's authoritative state.
+- `exit/quit`: Safely disconnect the client and close the terminal.
 
-buy/sell/short/cover <symbol> <volume> <price>: Place orders on the active broker.
+**Strategy management (coming soon)**
 
-cancel <vt_orderid>: Cancel an existing order.
+- `strategy <action> <name>`: Start, stop, or adjust automated vn.py strategies across different accounts.
 
-broker <name>: Switch the current default broker context.
+## 🚀 Getting Started
 
-sync: Manual Data Refresh. Triggers the Janus Server to proactively request a full data update (Account & Positions) from all active Broker Gateways. Use this to ensure the TUI display is perfectly aligned with the broker's authoritative state.
+1. **Configuration**: Define your broker credentials and gateway settings in `config.yaml`.
+2. **Start Server**: Run `python -m janus.server`. The server initializes all configured broker connections.
+3. **Start Client**: Run `python -m janus.client`. The client subscribes to all server-side event streams on connect.
 
-exit/quit: Safely disconnect the client and close the terminal.
+## ❓ Clarifications / Open Questions
 
-Strategy Management (Coming Soon):
-
-strategy <action> <name>: Start, stop, or adjust automated vn.py strategies across different accounts.
-
-🚀 Getting Started
-Configuration: Define your broker credentials and gateway settings in config.yaml.
-
-Start Server: Run python -m janus.server. The server will automatically initialize all configured broker connections.
-
-Start Client: Run python -m janus.client. The client will automatically subscribe to all server-side event streams upon connection.
+- **Configuration location**: Is `config.yaml` expected in the project root, user home directory, or a specific config
+  path (e.g., `~/.config/janus/config.yaml`)? If there is a default path, documenting it will reduce setup friction.
+- **Python/vn.py requirements**: If there are pinned versions (Python, vn.py, gateway dependencies), listing them here
+  will make environment setup clearer.
