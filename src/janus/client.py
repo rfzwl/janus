@@ -1,6 +1,6 @@
 import threading
 import sys
-from typing import List, Dict, Callable, Any
+from typing import List, Dict, Callable, Any, Optional
 
 from vnpy.rpc import RpcClient
 from vnpy.trader.object import OrderData, SubscribeRequest
@@ -13,6 +13,7 @@ class JanusRpcClient(RpcClient):
     def __init__(self):
         super().__init__()
         self.config = ConfigLoader()
+        self.available_gateways = self._load_gateways()
         self.default_gateway = self._resolve_default_gateway()
         self.orders: Dict[str, OrderData] = {}
         self.log_callback: Callable[[str], None] = lambda x: print(x) 
@@ -43,9 +44,16 @@ class JanusRpcClient(RpcClient):
         if not parts:
             return
 
+        if parts[0] == "broker":
+            self._handle_broker_command(parts, log_func)
+            return
+
+        self._dispatch_command(parts, log_func)
+
+    def _dispatch_command(self, parts: list, log_func: Callable, gateway_override: Optional[str] = None):
         match parts[0]:
             case "buy" | "sell" | "short" | "cover":
-                self._send_order_cmd(parts)
+                self._send_order_cmd(parts, gateway_override=gateway_override)
             case "cancel":
                 if len(parts) < 2:
                     log_func("Usage: cancel <vt_orderid>")
@@ -58,7 +66,42 @@ class JanusRpcClient(RpcClient):
             case _:
                 log_func(f"Unknown command: {parts[0]}")
 
-    def _send_order_cmd(self, parts: list):
+    def _handle_broker_command(self, parts: list, log_func: Callable):
+        if len(parts) == 1:
+            log_func(f"Current broker: {self.default_gateway}")
+            log_func("Usage: broker <name> | broker list")
+            return
+
+        subcmd = parts[1]
+        if subcmd in ("list", "ls"):
+            self._list_brokers(log_func)
+            return
+
+        broker = subcmd
+        if broker not in self.available_gateways:
+            log_func(f"Unknown broker: {broker}")
+            self._list_brokers(log_func)
+            return
+
+        if len(parts) == 2:
+            self.default_gateway = broker
+            log_func(f"Default broker set to: {broker}")
+            return
+
+        self._dispatch_command(parts[2:], log_func, gateway_override=broker)
+
+    def _list_brokers(self, log_func: Callable):
+        if not self.available_gateways:
+            log_func("No brokers configured.")
+            return
+
+        lines = ["Brokers:"]
+        for name in self.available_gateways:
+            marker = "*" if name == self.default_gateway else " "
+            lines.append(f"{marker} {name}")
+        log_func("\n".join(lines))
+
+    def _send_order_cmd(self, parts: list, gateway_override: Optional[str] = None):
         if len(parts) < 4:
             self.log_callback("Usage: <action> <symbol> <volume> <price> [exchange]")
             return
@@ -83,8 +126,9 @@ class JanusRpcClient(RpcClient):
                 "offset": Offset.OPEN 
             }
             
-            order_id = self.send_order(req, self.default_gateway)
-            self.log_callback(f"Order sent: {order_id}")
+            broker = gateway_override or self.default_gateway
+            order_id = self.send_order(req, broker)
+            self.log_callback(f"Order sent: {order_id} (broker {broker})")
             
         except Exception as e:
             self.log_callback(f"Order Error: {e}")
@@ -99,7 +143,16 @@ class JanusRpcClient(RpcClient):
 
     def _resolve_default_gateway(self) -> str:
         default_gateway = self.config.get_default_account_name()
-        return default_gateway or "WEBULL"
+        if default_gateway and (not self.available_gateways or default_gateway in self.available_gateways):
+            return default_gateway
+        if self.available_gateways:
+            return self.available_gateways[0]
+        return "WEBULL"
+
+    def _load_gateways(self) -> List[str]:
+        accounts = self.config.get_all_accounts()
+        gateways = [acct.get("name") for acct in accounts if acct.get("name")]
+        return gateways
 
 def main():
     client = JanusRpcClient()
