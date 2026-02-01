@@ -63,6 +63,8 @@ Janus provides a flexible command system for managing multiple accounts from a s
 ## 🚀 Getting Started
 
 1. **Configuration**: Define your broker credentials and gateway settings in `config.yaml`.
-2. **Start Server**: Run `python -m janus.server`. The server initializes all configured broker connections.
-3. **Start Client**: Run `python -m janus.client`. The client subscribes to all server-side event streams on connect.
-
+2. **Install (uv)**:
+   - `uv venv`
+   - `uv pip install -e . --python .venv`
+3. **Start Server**: Run `uv run python -m janus.server`. The server initializes all configured broker connections.
+4. **Start Client**: Run `uv run python -m janus.client`. The client subscribes to all server-side event streams on connect.

@@ -36,7 +36,7 @@
 ## Build, Test, and Development Commands
 
 - Package manager: **uv** (preferred).
-- Install (editable): `uv venv` then `uv pip install -e .`
+- Install (editable): `uv venv` then `uv pip install -e . --python .venv`
 - Run server: `uv run python -m janus.server`
 - Run client: `uv run python -m janus.client`
 - Tests: none currently; add tests only when requested or when behavior changes need coverage.
