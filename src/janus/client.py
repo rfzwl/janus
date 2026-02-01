@@ -90,6 +90,8 @@ class JanusRpcClient(RpcClient):
         if len(parts) == 2:
             self.default_gateway = broker
             log_func(f"Default broker set to: {broker}")
+            if self.tui:
+                self.tui.update_prompt(broker)
             return
 
         self._dispatch_command(parts[2:], log_func, gateway_override=broker)

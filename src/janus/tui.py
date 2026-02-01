@@ -23,7 +23,7 @@ class JanusTUI:
         # Input Buffer
         self.input_field = TextArea(
             height=3,
-            prompt='(Janus) > ',
+            prompt=self._prompt_for(self.rpc_client.default_gateway),
             style='class:input-field',
             multiline=False,
             accept_handler=self.handle_command,
@@ -67,6 +67,16 @@ class JanusTUI:
             mouse_support=True,
             refresh_interval=1.0 # 1s 刷新一次 UI
         )
+
+    def update_prompt(self, broker_name: str):
+        """Update the input prompt to reflect current broker."""
+        self.input_field.prompt = self._prompt_for(broker_name)
+        if self.app.is_running:
+            self.app.invalidate()
+
+    @staticmethod
+    def _prompt_for(broker_name: str) -> str:
+        return f"({broker_name}) > "
 
     def log(self, message: str):
         """Append text to output area"""
