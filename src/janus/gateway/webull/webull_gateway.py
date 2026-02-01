@@ -72,24 +72,27 @@ class WebullOfficialGateway(BaseGateway):
             self.on_log("正在连接 Webull Open API (Trade Only)...")
 
             if not self.trade_client:
-                if not self.app_key or not self.app_secret:
-                    self.on_log("配置错误: 缺少 app_key 或 app_secret")
-                    return
-
-                # ================= [日志静音处理] =================
-                # 屏蔽 SDK 初始化过程中的 INFO 日志噪音
-                previous_disable_level = logging.root.manager.disable
-                logging.disable(logging.INFO)
-                # ================================================
-
-                try:
-                    # 1. 初始化 SDK
-                    self.api_client = ApiClient(self.app_key, self.app_secret, self.region_id)
-                    self.api_client.add_endpoint(self.region_id, "api.webull.com")
+                if self.api_client:
                     self.trade_client = TradeClient(self.api_client)
-                finally:
-                    # 恢复日志
-                    logging.disable(previous_disable_level)
+                else:
+                    if not self.app_key or not self.app_secret:
+                        self.on_log("配置错误: 缺少 app_key 或 app_secret")
+                        return
+
+                    # ================= [日志静音处理] =================
+                    # 屏蔽 SDK 初始化过程中的 INFO 日志噪音
+                    previous_disable_level = logging.root.manager.disable
+                    logging.disable(logging.INFO)
+                    # ================================================
+
+                    try:
+                        # 1. 初始化 SDK
+                        self.api_client = ApiClient(self.app_key, self.app_secret, self.region_id)
+                        self.api_client.add_endpoint(self.region_id, "api.webull.com")
+                        self.trade_client = TradeClient(self.api_client)
+                    finally:
+                        # 恢复日志
+                        logging.disable(previous_disable_level)
 
             # 2. 清理 SDK 残留的 Logger Handler
             self._cleanup_webull_loggers()
