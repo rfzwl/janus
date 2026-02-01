@@ -31,11 +31,17 @@ class WebullOfficialGateway(BaseGateway):
     """
     default_name = "WEBULL"
 
-    def __init__(self, event_engine, gateway_name="WEBULL"):
+    def __init__(
+        self,
+        event_engine,
+        gateway_name="WEBULL",
+        api_client: Optional[ApiClient] = None,
+        trade_client: Optional[TradeClient] = None,
+    ):
         super().__init__(event_engine, gateway_name)
 
-        self.api_client: Optional[ApiClient] = None
-        self.trade_client: Optional[TradeClient] = None
+        self.api_client: Optional[ApiClient] = api_client
+        self.trade_client: Optional[TradeClient] = trade_client
 
         self.account_id = ""
         self.app_key = ""
@@ -55,27 +61,35 @@ class WebullOfficialGateway(BaseGateway):
         self.app_secret = setting.get("app_secret", "")
         self.region_id = setting.get("region_id", "us")
 
-        if not self.app_key or not self.app_secret:
-            self.on_log("配置错误: 缺少 app_key 或 app_secret")
-            return
+        injected_api_client = setting.get("api_client")
+        injected_trade_client = setting.get("trade_client")
+        if injected_api_client:
+            self.api_client = injected_api_client
+        if injected_trade_client:
+            self.trade_client = injected_trade_client
 
         try:
             self.on_log("正在连接 Webull Open API (Trade Only)...")
 
-            # ================= [日志静音处理] =================
-            # 屏蔽 SDK 初始化过程中的 INFO 日志噪音
-            previous_disable_level = logging.root.manager.disable
-            logging.disable(logging.INFO)
-            # ================================================
+            if not self.trade_client:
+                if not self.app_key or not self.app_secret:
+                    self.on_log("配置错误: 缺少 app_key 或 app_secret")
+                    return
 
-            try:
-                # 1. 初始化 SDK
-                self.api_client = ApiClient(self.app_key, self.app_secret, self.region_id)
-                self.api_client.add_endpoint(self.region_id, "api.webull.com")
-                self.trade_client = TradeClient(self.api_client)
-            finally:
-                # 恢复日志
-                logging.disable(previous_disable_level)
+                # ================= [日志静音处理] =================
+                # 屏蔽 SDK 初始化过程中的 INFO 日志噪音
+                previous_disable_level = logging.root.manager.disable
+                logging.disable(logging.INFO)
+                # ================================================
+
+                try:
+                    # 1. 初始化 SDK
+                    self.api_client = ApiClient(self.app_key, self.app_secret, self.region_id)
+                    self.api_client.add_endpoint(self.region_id, "api.webull.com")
+                    self.trade_client = TradeClient(self.api_client)
+                finally:
+                    # 恢复日志
+                    logging.disable(previous_disable_level)
 
             # 2. 清理 SDK 残留的 Logger Handler
             self._cleanup_webull_loggers()
