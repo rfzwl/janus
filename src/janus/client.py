@@ -44,6 +44,10 @@ class JanusRpcClient(RpcClient):
         if not parts:
             return
 
+        if parts[0] == "help":
+            self._handle_help_command(parts, log_func)
+            return
+
         if parts[0] == "broker":
             self._handle_broker_command(parts, log_func)
             return
@@ -89,6 +93,57 @@ class JanusRpcClient(RpcClient):
             return
 
         self._dispatch_command(parts[2:], log_func, gateway_override=broker)
+
+    def _handle_help_command(self, parts: list, log_func: Callable):
+        if len(parts) == 1:
+            log_func(self._help_text())
+            return
+
+        command = parts[1].lower()
+        detail = self._help_for(command)
+        if detail:
+            log_func(detail)
+        else:
+            log_func(f"Unknown help topic: {command}")
+
+    def _help_text(self) -> str:
+        lines = [
+            "Commands:",
+            "  broker <name>           Switch default broker",
+            "  broker list             List configured brokers (* is default)",
+            "  broker <name> <cmd...>  Run a command on a broker without changing default",
+            "  buy|sell|short|cover <symbol> <volume> <price>",
+            "  cancel <vt_orderid>",
+            "  connect                 Subscribe to all events",
+            "  help [command]",
+            "  exit|quit",
+            "",
+            f"Current broker: {self.default_gateway}",
+        ]
+        return "\n".join(lines)
+
+    def _help_for(self, command: str) -> Optional[str]:
+        details = {
+            "broker": "\n".join([
+                "Usage:",
+                "  broker <name>",
+                "  broker list",
+                "  broker <name> <cmd...>",
+                "Notes:",
+                "  - Use 'broker list' to see configured brokers.",
+                "  - 'broker <name> buy AAPL 1 100' routes only that command.",
+            ]),
+            "buy": "Usage: buy <symbol> <volume> <price>",
+            "sell": "Usage: sell <symbol> <volume> <price>",
+            "short": "Usage: short <symbol> <volume> <price>",
+            "cover": "Usage: cover <symbol> <volume> <price>",
+            "cancel": "Usage: cancel <vt_orderid>",
+            "connect": "Usage: connect  (subscribe to all events)",
+            "help": "Usage: help [command]",
+            "exit": "Usage: exit  (stop remote server and quit)",
+            "quit": "Usage: quit  (quit client)",
+        }
+        return details.get(command)
 
     def _list_brokers(self, log_func: Callable):
         if not self.available_gateways:

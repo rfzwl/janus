@@ -54,6 +54,7 @@ Janus provides a flexible command system for managing multiple accounts from a s
 - `broker <name>`: Switch the current default broker context.
 - `broker list`: Show configured brokers, `*` marks the current default.
 - `broker <name> <command...>`: Run a command against a broker without changing the default.
+- `help [command]`: Show command help (prints current default broker).
 - `sync`: Manual data refresh. Triggers the Janus Server to proactively request a full data update (Account & Positions)
   from all active Broker Gateways. Use this to ensure the TUI display is aligned with the broker's authoritative state.
 - `exit/quit`: Safely disconnect the client and close the terminal.
