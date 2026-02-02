@@ -12,6 +12,7 @@ from prompt_toolkit.history import FileHistory
 from rich.console import Console
 from rich.table import Table
 import io
+import queue
 
 class JanusTUI:
     def __init__(self, rpc_client, history_path: str = ".janus_history"):
@@ -78,13 +79,16 @@ class JanusTUI:
             'output-field': '#cccccc',
         })
 
+        self._log_queue = queue.Queue()
+
         self.app = Application(
             layout=self.layout,
             key_bindings=self.kb,
             style=self.style,
             full_screen=True,
             mouse_support=True,
-            refresh_interval=1.0 # 1s 刷新一次 UI
+            refresh_interval=1.0,  # 1s 刷新一次 UI
+            before_render=lambda app: self._flush_log_queue(),
         )
 
     def update_prompt(self, account_name: str):
@@ -99,9 +103,35 @@ class JanusTUI:
 
     def log(self, message: str):
         """Append text to output area"""
-        new_text = self.output_field.text + f"\n{message}"
+        self._log_queue.put(message)
+        if self.app.is_running:
+            self.app.invalidate()
+        else:
+            self._flush_log_queue()
+
+    def _flush_log_queue(self):
+        messages = []
+        while True:
+            try:
+                messages.append(self._log_queue.get_nowait())
+            except queue.Empty:
+                break
+
+        if not messages:
+            return
+
+        current_text = self.output_field.text
+        if current_text:
+            new_text = current_text + "\n" + "\n".join(messages)
+        else:
+            new_text = "\n".join(messages)
+
         lines = new_text.split('\n')[-50:]
-        self.output_field.buffer.document = Document('\n'.join(lines), cursor_position=len(new_text))
+        trimmed_text = '\n'.join(lines)
+        self.output_field.buffer.document = Document(
+            trimmed_text,
+            cursor_position=len(trimmed_text),
+        )
 
     def get_open_orders_text(self):
         """Generate Rich Table string for prompt_toolkit"""
