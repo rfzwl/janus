@@ -1,4 +1,5 @@
 import sys
+import tempfile
 from pathlib import Path
 import unittest
 from unittest import mock
@@ -6,6 +7,7 @@ from unittest import mock
 sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
 
 from janus.client import JanusRpcClient
+from janus.tui import JanusTUI
 
 
 class FakeConfigLoader:
@@ -59,6 +61,19 @@ class ClientCommandTests(unittest.TestCase):
         self.assertEqual(client.default_gateway, "acct1")
         self.assertEqual(len(client.sent_orders), 1)
         self.assertEqual(client.sent_orders[0][1], "acct2")
+
+    def test_command_history_persists_across_sessions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            history_path = str(Path(tmpdir) / "janus_history.txt")
+            client = CapturingClient()
+            tui = JanusTUI(client, history_path=history_path)
+            tui.history.append_string("buy AAPL 1 100")
+
+            another_client = CapturingClient()
+            next_tui = JanusTUI(another_client, history_path=history_path)
+            history_entries = list(next_tui.history.load_history_strings())
+
+            self.assertIn("buy AAPL 1 100", history_entries)
 
 
 if __name__ == "__main__":
