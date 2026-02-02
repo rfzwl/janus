@@ -417,13 +417,17 @@ class WebullOfficialGateway(BaseGateway):
                         status = Status.PARTTRADED if traded < total else Status.ALLTRADED
 
                     status_raw = self._pick_value(detail, "status", "order_status")
+                    if status_raw is None:
+                        status_raw = self._pick_value(item, "status", "order_status")
                     if isinstance(status_raw, str):
-                        status_raw = status_raw.lower()
-                        if "cancel" in status_raw:
+                        status_norm = status_raw.lower().replace(" ", "_")
+                        if "cancel" in status_norm:
                             status = Status.CANCELLED
-                        elif "reject" in status_raw:
+                        elif "reject" in status_norm:
                             status = Status.REJECTED
-                        elif "fill" in status_raw:
+                        elif "partial" in status_norm and "fill" in status_norm:
+                            status = Status.PARTTRADED
+                        elif "fill" in status_norm or "execut" in status_norm or "done" in status_norm:
                             status = Status.ALLTRADED
 
                     order_type_raw = self._pick_value(detail, "order_type", "orderType")
