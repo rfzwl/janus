@@ -3,6 +3,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout.containers import HSplit, Window, WindowAlign
 from prompt_toolkit.layout.controls import FormattedTextControl, BufferControl
 from prompt_toolkit.layout.layout import Layout
+from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.widgets import Frame, TextArea
 from prompt_toolkit.styles import Style
 from prompt_toolkit.buffer import Buffer
@@ -22,7 +23,7 @@ class JanusTUI:
 
         # Input Buffer
         self.input_field = TextArea(
-            height=3,
+            height=Dimension(min=1, preferred=3, max=3),
             prompt=self._prompt_for(self.rpc_client.default_account),
             style='class:input-field',
             multiline=False,
@@ -31,15 +32,27 @@ class JanusTUI:
         )
 
         # Output Area (Logs)
-        self.output_field = TextArea(style='class:output-field', focusable=False)
+        self.output_field = TextArea(
+            style='class:output-field',
+            focusable=False,
+            height=Dimension(min=3, weight=2),
+        )
 
         # Status Area (Open Orders)
         self.status_control = FormattedTextControl(text=self.get_open_orders_text)
-        self.status_window = Window(content=self.status_control, height=10, style="class:status")
+        self.status_window = Window(
+            content=self.status_control,
+            height=Dimension(min=3, weight=1),
+            style="class:status",
+        )
 
         # Positions Area
         self.positions_control = FormattedTextControl(text=self.get_positions_text)
-        self.positions_window = Window(content=self.positions_control, height=10, style="class:positions")
+        self.positions_window = Window(
+            content=self.positions_control,
+            height=Dimension(min=3, weight=1),
+            style="class:positions",
+        )
 
         # Layout
         self.root_container = HSplit([
