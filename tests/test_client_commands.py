@@ -49,6 +49,57 @@ class SyncCapturingClient(JanusRpcClient):
         self.sync_calls.append(account or self.default_account)
 
 
+class SnapshotSyncClient(JanusRpcClient):
+    def __init__(self):
+        super().__init__()
+        self._socket_req = object()
+        self.sync_calls = []
+
+    def sync_gateway(self, account):
+        self.sync_calls.append(account)
+        return "ok"
+
+    def get_all_active_orders(self):
+        return [
+            OrderData(
+                symbol="AAPL",
+                exchange=Exchange.SMART,
+                orderid="order1",
+                direction=Direction.LONG,
+                gateway_name="acct1",
+            ),
+            OrderData(
+                symbol="MSFT",
+                exchange=Exchange.SMART,
+                orderid="order2",
+                direction=Direction.LONG,
+                gateway_name="acct2",
+            ),
+        ]
+
+    def get_all_positions(self):
+        return [
+            PositionData(
+                symbol="AAPL",
+                exchange=Exchange.SMART,
+                direction=Direction.LONG,
+                volume=5,
+                price=100,
+                pnl=0,
+                gateway_name="acct1",
+            ),
+            PositionData(
+                symbol="MSFT",
+                exchange=Exchange.SMART,
+                direction=Direction.LONG,
+                volume=2,
+                price=50,
+                pnl=0,
+                gateway_name="acct2",
+            ),
+        ]
+
+
 class ClientCommandTests(unittest.TestCase):
     def setUp(self):
         self.config_patcher = mock.patch("janus.client.ConfigLoader", FakeConfigLoader)
@@ -130,6 +181,18 @@ class ClientCommandTests(unittest.TestCase):
         logs = []
         client.process_command("account acct2", logs.append)
         self.assertEqual(client.sync_calls, ["acct2"])
+
+    def test_sync_refreshes_snapshot_for_account(self):
+        client = SnapshotSyncClient()
+        client.request_sync(account="acct1", log_func=lambda _: None)
+
+        orders = client.get_open_orders("acct1")
+        self.assertEqual(len(orders), 1)
+        self.assertEqual(orders[0].orderid, "order1")
+
+        positions = client.get_positions("acct1")
+        self.assertEqual(len(positions), 1)
+        self.assertEqual(positions[0].symbol, "AAPL")
 
 
 if __name__ == "__main__":

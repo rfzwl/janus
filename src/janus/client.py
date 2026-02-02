@@ -234,8 +234,38 @@ class JanusRpcClient(RpcClient):
             res = remote(target_account)
             if res is not None:
                 logger(str(res))
+            self._refresh_snapshot(target_account, logger)
         except Exception as e:
             logger(f"Sync failed: {e}")
+
+    def _refresh_snapshot(self, account: str, logger: Callable[[str], None]):
+        try:
+            active_orders = self.get_all_active_orders()
+            positions = self.get_all_positions()
+        except Exception as e:
+            logger(f"Snapshot refresh failed: {e}")
+            return
+
+        self.orders = {
+            order_id: order
+            for order_id, order in self.orders.items()
+            if order.gateway_name != account
+        }
+        for order in active_orders:
+            if order.gateway_name == account:
+                self.orders[order.vt_orderid] = order
+
+        self.positions = {
+            pos_id: pos
+            for pos_id, pos in self.positions.items()
+            if pos.gateway_name != account
+        }
+        for pos in positions:
+            if pos.gateway_name == account:
+                self.positions[pos.vt_positionid] = pos
+
+        if self.tui and self.tui.app.is_running:
+            self.tui.app.invalidate()
 
     def _resolve_default_account(self) -> str:
         default_account = self.config.get_default_account_name()

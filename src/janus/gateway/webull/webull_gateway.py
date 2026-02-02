@@ -363,36 +363,93 @@ class WebullOfficialGateway(BaseGateway):
         """
         if not self.trade_client: return
         try:
-            resp = self.trade_client.trade.get_open_orders(self.account_id)
+            resp = None
+            if hasattr(self.trade_client, "order_v2") and hasattr(self.trade_client.order_v2, "get_order_open"):
+                resp = self.trade_client.order_v2.get_order_open(self.account_id, page_size=100)
+            else:
+                resp = self.trade_client.trade.get_open_orders(self.account_id)
             if resp.status_code == 200:
                 data = resp.json()
-                orders_list = data if isinstance(data, list) else data.get("data", [])
-                
+                orders_list = self._extract_list(data)
+
                 for item in orders_list:
-                    # 状态映射逻辑需根据实际返回完善，此处简化为 NOTTRADED
-                    status = Status.NOTTRADED
+                    if not isinstance(item, dict):
+                        continue
+
+                    detail = item.get("orders")
+                    if isinstance(detail, list) and detail:
+                        detail = detail[0]
+                    if not isinstance(detail, dict):
+                        detail = item
+
+                    symbol = detail.get("symbol")
+                    if not symbol:
+                        ticker = detail.get("ticker")
+                        if isinstance(ticker, dict):
+                            symbol = ticker.get("symbol", "")
+                    symbol = symbol or ""
+
+                    side = self._pick_value(detail, "side", "action", "orderAction", "order_action")
                     direction = None
-                    side = self._pick_value(item, "action", "side", "orderAction", "order_action")
                     if isinstance(side, str):
                         side = side.upper()
                         if side in ("BUY", "BUY_OPEN", "BUY_TO_COVER"):
                             direction = Direction.LONG
                         elif side in ("SELL", "SELL_SHORT", "SELL_TO_OPEN"):
                             direction = Direction.SHORT
-                    
-                    # 尝试解析 filledQuantity
-                    traded = float(item.get("filledQuantity", 0))
-                    total = float(item.get("totalQuantity", 0))
-                    
+
+                    total = self._safe_float(self._pick_value(
+                        detail, "total_quantity", "quantity", "totalQuantity"
+                    ))
+                    if total is None:
+                        total = self._safe_float(self._pick_value(item, "total_quantity", "quantity", "totalQuantity"))
+                    total = total or 0
+
+                    traded = self._safe_float(self._pick_value(
+                        detail, "filled_quantity", "filled_qty", "filledQuantity"
+                    ))
+                    if traded is None:
+                        traded = self._safe_float(self._pick_value(item, "filled_quantity", "filled_qty", "filledQuantity"))
+                    traded = traded or 0
+
+                    status = Status.NOTTRADED
                     if traded > 0:
                         status = Status.PARTTRADED if traded < total else Status.ALLTRADED
 
+                    status_raw = self._pick_value(detail, "status", "order_status")
+                    if isinstance(status_raw, str):
+                        status_raw = status_raw.lower()
+                        if "cancel" in status_raw:
+                            status = Status.CANCELLED
+                        elif "reject" in status_raw:
+                            status = Status.REJECTED
+                        elif "fill" in status_raw:
+                            status = Status.ALLTRADED
+
+                    order_type_raw = self._pick_value(detail, "order_type", "orderType")
+                    order_type = OrderType.LIMIT
+                    if isinstance(order_type_raw, str):
+                        order_type_raw = order_type_raw.upper()
+                        if order_type_raw == "MARKET":
+                            order_type = OrderType.MARKET
+                        elif order_type_raw == "STOP":
+                            order_type = OrderType.STOP
+
+                    price = self._safe_float(self._pick_value(detail, "limit_price", "lmtPrice", "price")) or 0
+
+                    order_id = self._pick_value(detail, "order_id", "orderId", "client_order_id")
+                    if not order_id:
+                        order_id = self._pick_value(item, "order_id", "orderId", "client_order_id")
+                    if not order_id:
+                        continue
+
                     order = OrderData(
-                        orderid=str(item.get("orderId")),
-                        symbol=item.get("ticker", {}).get("symbol", ""),
+                        orderid=str(order_id),
+                        symbol=symbol,
                         exchange=Exchange.SMART,
+                        type=order_type,
                         direction=direction,
-                        price=float(item.get("lmtPrice", 0)),
+                        price=price,
                         volume=total,
                         traded=traded,
                         status=status,
@@ -428,3 +485,11 @@ class WebullOfficialGateway(BaseGateway):
             return float(value)
         except (TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _extract_list(value: Any) -> list:
+        if isinstance(value, list):
+            return value
+        if isinstance(value, dict):
+            return value.get("data") or value.get("items") or value.get("orders") or []
+        return []
