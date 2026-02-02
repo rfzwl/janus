@@ -8,6 +8,9 @@ sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
 
 from janus.client import JanusRpcClient
 from janus.tui import JanusTUI
+from vnpy.event import Event
+from vnpy.trader.constant import Direction, Exchange
+from vnpy.trader.object import OrderData, PositionData
 
 
 class FakeConfigLoader:
@@ -37,6 +40,15 @@ class CapturingClient(JanusRpcClient):
         return "order1"
 
 
+class SyncCapturingClient(JanusRpcClient):
+    def __init__(self):
+        super().__init__()
+        self.sync_calls = []
+
+    def request_sync(self, account=None, log_func=None):
+        self.sync_calls.append(account or self.default_account)
+
+
 class ClientCommandTests(unittest.TestCase):
     def setUp(self):
         self.config_patcher = mock.patch("janus.client.ConfigLoader", FakeConfigLoader)
@@ -48,17 +60,17 @@ class ClientCommandTests(unittest.TestCase):
         self.config_patcher.stop()
         self.rpc_init_patcher.stop()
 
-    def test_broker_set_default(self):
+    def test_account_set_default(self):
         client = CapturingClient()
         logs = []
-        client.process_command("broker acct2", logs.append)
-        self.assertEqual(client.default_gateway, "acct2")
+        client.process_command("account acct2", logs.append)
+        self.assertEqual(client.default_account, "acct2")
 
-    def test_broker_route_does_not_change_default(self):
+    def test_account_route_does_not_change_default(self):
         client = CapturingClient()
         logs = []
-        client.process_command("broker acct2 buy AAPL 1 10", logs.append)
-        self.assertEqual(client.default_gateway, "acct1")
+        client.process_command("account acct2 buy AAPL 1 10", logs.append)
+        self.assertEqual(client.default_account, "acct1")
         self.assertEqual(len(client.sent_orders), 1)
         self.assertEqual(client.sent_orders[0][1], "acct2")
 
@@ -74,6 +86,50 @@ class ClientCommandTests(unittest.TestCase):
             history_entries = list(next_tui.history.load_history_strings())
 
             self.assertIn("buy AAPL 1 100", history_entries)
+
+    def test_callback_handles_event_wrapper(self):
+        client = CapturingClient()
+        pos = PositionData(
+            symbol="AAPL",
+            exchange=Exchange.SMART,
+            direction=Direction.LONG,
+            volume=1,
+            price=10,
+            pnl=0,
+            gateway_name="acct1",
+        )
+        event = Event("ePosition.", pos)
+        client.callback("", event)
+
+        positions = client.get_positions("acct1")
+        self.assertEqual(len(positions), 1)
+        self.assertEqual(positions[0].symbol, "AAPL")
+
+        order = OrderData(
+            symbol="AAPL",
+            exchange=Exchange.SMART,
+            orderid="order1",
+            direction=Direction.LONG,
+            gateway_name="acct1",
+        )
+        order_event = Event("eOrder.", order)
+        client.callback("", order_event)
+
+        orders = client.get_open_orders("acct1")
+        self.assertEqual(len(orders), 1)
+        self.assertEqual(orders[0].orderid, "order1")
+
+    def test_sync_command_triggers_sync(self):
+        client = SyncCapturingClient()
+        logs = []
+        client.process_command("sync", logs.append)
+        self.assertEqual(client.sync_calls, ["acct1"])
+
+    def test_account_switch_triggers_sync(self):
+        client = SyncCapturingClient()
+        logs = []
+        client.process_command("account acct2", logs.append)
+        self.assertEqual(client.sync_calls, ["acct2"])
 
 
 if __name__ == "__main__":

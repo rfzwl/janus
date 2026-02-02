@@ -3,7 +3,7 @@ import sys
 from typing import List, Dict, Callable, Any, Optional
 
 from vnpy.rpc import RpcClient
-from vnpy.trader.object import OrderData, SubscribeRequest
+from vnpy.trader.object import OrderData, PositionData, SubscribeRequest
 from vnpy.trader.constant import Direction, Exchange, OrderType, Offset, Status
 
 from .tui import JanusTUI
@@ -13,30 +13,46 @@ class JanusRpcClient(RpcClient):
     def __init__(self):
         super().__init__()
         self.config = ConfigLoader()
-        self.available_gateways = self._load_gateways()
-        self.default_gateway = self._resolve_default_gateway()
+        self.available_accounts = self._load_accounts()
+        self.default_account = self._resolve_default_account()
         self.orders: Dict[str, OrderData] = {}
+        self.positions: Dict[str, PositionData] = {}
         self.log_callback: Callable[[str], None] = lambda x: print(x) 
         self.tui = None
 
     def callback(self, topic: str, data: Any):
         """Standard vnpy RPC callback"""
-        match topic:
-            case "eOrder":
-                if data.is_active():
-                    self.orders[data.vt_orderid] = data
-                elif data.vt_orderid in self.orders:
-                    self.orders[data.vt_orderid] = data 
+        event_type = topic
+        payload = data
+        if hasattr(data, "type") and hasattr(data, "data"):
+            event_type = data.type
+            payload = data.data
+
+        match event_type:
+            case t if t.startswith("eOrder"):
+                if payload.is_active():
+                    self.orders[payload.vt_orderid] = payload
+                elif payload.vt_orderid in self.orders:
+                    self.orders[payload.vt_orderid] = payload
                 
+                if self.tui and self.tui.app.is_running:
+                    self.tui.app.invalidate()
+            case t if t.startswith("ePosition"):
+                self.positions[payload.vt_positionid] = payload
                 if self.tui and self.tui.app.is_running:
                     self.tui.app.invalidate()
                     
             case "eLog":
                 if self.tui:
-                    self.tui.log(f"[Server] {data.msg}")
+                    self.tui.log(f"[Server] {payload.msg}")
 
-    def get_open_orders(self) -> List[OrderData]:
-        return list(self.orders.values())
+    def get_open_orders(self, account: Optional[str] = None) -> List[OrderData]:
+        target_account = account or self.default_account
+        return [order for order in self.orders.values() if order.gateway_name == target_account and order.is_active()]
+
+    def get_positions(self, account: Optional[str] = None) -> List[PositionData]:
+        target_account = account or self.default_account
+        return [pos for pos in self.positions.values() if pos.gateway_name == target_account]
 
     def process_command(self, cmd: str, log_func: Callable):
         self.log_callback = log_func
@@ -48,16 +64,16 @@ class JanusRpcClient(RpcClient):
             self._handle_help_command(parts, log_func)
             return
 
-        if parts[0] == "broker":
-            self._handle_broker_command(parts, log_func)
+        if parts[0] in ("account", "broker"):
+            self._handle_account_command(parts, log_func)
             return
 
         self._dispatch_command(parts, log_func)
 
-    def _dispatch_command(self, parts: list, log_func: Callable, gateway_override: Optional[str] = None):
+    def _dispatch_command(self, parts: list, log_func: Callable, account_override: Optional[str] = None):
         match parts[0]:
             case "buy" | "sell" | "short" | "cover":
-                self._send_order_cmd(parts, gateway_override=gateway_override)
+                self._send_order_cmd(parts, account_override=account_override)
             case "cancel":
                 if len(parts) < 2:
                     log_func("Usage: cancel <vt_orderid>")
@@ -67,34 +83,37 @@ class JanusRpcClient(RpcClient):
             case "connect":
                 self.subscribe_topic("")
                 log_func("Subscribed to all events.")
+            case "sync":
+                self.request_sync(log_func=log_func)
             case _:
                 log_func(f"Unknown command: {parts[0]}")
 
-    def _handle_broker_command(self, parts: list, log_func: Callable):
+    def _handle_account_command(self, parts: list, log_func: Callable):
         if len(parts) == 1:
-            log_func(f"Current broker: {self.default_gateway}")
-            log_func("Usage: broker <name> | broker list")
+            log_func(f"Current account: {self.default_account}")
+            log_func("Usage: account <name> | account list")
             return
 
         subcmd = parts[1]
         if subcmd in ("list", "ls"):
-            self._list_brokers(log_func)
+            self._list_accounts(log_func)
             return
 
-        broker = subcmd
-        if broker not in self.available_gateways:
-            log_func(f"Unknown broker: {broker}")
-            self._list_brokers(log_func)
+        account = subcmd
+        if account not in self.available_accounts:
+            log_func(f"Unknown account: {account}")
+            self._list_accounts(log_func)
             return
 
         if len(parts) == 2:
-            self.default_gateway = broker
-            log_func(f"Default broker set to: {broker}")
+            self.default_account = account
+            log_func(f"Default account set to: {account}")
             if self.tui:
-                self.tui.update_prompt(broker)
+                self.tui.update_prompt(account)
+            self.request_sync(log_func=log_func)
             return
 
-        self._dispatch_command(parts[2:], log_func, gateway_override=broker)
+        self._dispatch_command(parts[2:], log_func, account_override=account)
 
     def _handle_help_command(self, parts: list, log_func: Callable):
         if len(parts) == 1:
@@ -102,6 +121,8 @@ class JanusRpcClient(RpcClient):
             return
 
         command = parts[1].lower()
+        if command == "broker":
+            command = "account"
         detail = self._help_for(command)
         if detail:
             log_func(detail)
@@ -111,29 +132,30 @@ class JanusRpcClient(RpcClient):
     def _help_text(self) -> str:
         lines = [
             "Commands:",
-            "  broker <name>           Switch default broker",
-            "  broker list             List configured brokers (* is default)",
-            "  broker <name> <cmd...>  Run a command on a broker without changing default",
+            "  account <name>           Switch default account",
+            "  account list             List configured accounts (* is default)",
+            "  account <name> <cmd...>  Run a command on an account without changing default",
             "  buy|sell|short|cover <symbol> <volume> <price>",
             "  cancel <vt_orderid>",
             "  connect                 Subscribe to all events",
+            "  sync                    Sync account, positions, and open orders",
             "  help [command]",
             "  exit|quit",
             "",
-            f"Current broker: {self.default_gateway}",
+            f"Current account: {self.default_account}",
         ]
         return "\n".join(lines)
 
     def _help_for(self, command: str) -> Optional[str]:
         details = {
-            "broker": "\n".join([
+            "account": "\n".join([
                 "Usage:",
-                "  broker <name>",
-                "  broker list",
-                "  broker <name> <cmd...>",
+                "  account <name>",
+                "  account list",
+                "  account <name> <cmd...>",
                 "Notes:",
-                "  - Use 'broker list' to see configured brokers.",
-                "  - 'broker <name> buy AAPL 1 100' routes only that command.",
+                "  - Use 'account list' to see configured accounts.",
+                "  - 'account <name> buy AAPL 1 100' routes only that command.",
             ]),
             "buy": "Usage: buy <symbol> <volume> <price>",
             "sell": "Usage: sell <symbol> <volume> <price>",
@@ -141,24 +163,25 @@ class JanusRpcClient(RpcClient):
             "cover": "Usage: cover <symbol> <volume> <price>",
             "cancel": "Usage: cancel <vt_orderid>",
             "connect": "Usage: connect  (subscribe to all events)",
+            "sync": "Usage: sync  (sync current account)",
             "help": "Usage: help [command]",
             "exit": "Usage: exit  (stop remote server and quit)",
             "quit": "Usage: quit  (quit client)",
         }
         return details.get(command)
 
-    def _list_brokers(self, log_func: Callable):
-        if not self.available_gateways:
-            log_func("No brokers configured.")
+    def _list_accounts(self, log_func: Callable):
+        if not self.available_accounts:
+            log_func("No accounts configured.")
             return
 
-        lines = ["Brokers:"]
-        for name in self.available_gateways:
-            marker = "*" if name == self.default_gateway else " "
+        lines = ["Accounts:"]
+        for name in self.available_accounts:
+            marker = "*" if name == self.default_account else " "
             lines.append(f"{marker} {name}")
         log_func("\n".join(lines))
 
-    def _send_order_cmd(self, parts: list, gateway_override: Optional[str] = None):
+    def _send_order_cmd(self, parts: list, account_override: Optional[str] = None):
         if len(parts) < 4:
             self.log_callback("Usage: <action> <symbol> <volume> <price> [exchange]")
             return
@@ -183,9 +206,9 @@ class JanusRpcClient(RpcClient):
                 "offset": Offset.OPEN 
             }
             
-            broker = gateway_override or self.default_gateway
-            order_id = self.send_order(req, broker)
-            self.log_callback(f"Order sent: {order_id} (broker {broker})")
+            account = account_override or self.default_account
+            order_id = self.send_order(req, account)
+            self.log_callback(f"Order sent: {order_id} (account {account})")
             
         except Exception as e:
             self.log_callback(f"Order Error: {e}")
@@ -198,18 +221,34 @@ class JanusRpcClient(RpcClient):
         except Exception as e:
             print(f"Remote exit failed: {e}")
 
-    def _resolve_default_gateway(self) -> str:
-        default_gateway = self.config.get_default_account_name()
-        if default_gateway and (not self.available_gateways or default_gateway in self.available_gateways):
-            return default_gateway
-        if self.available_gateways:
-            return self.available_gateways[0]
+    def request_sync(self, account: Optional[str] = None, log_func: Optional[Callable[[str], None]] = None):
+        target_account = account or self.default_account
+        logger = log_func or self.log_callback or print
+        if not hasattr(self, "_socket_req"):
+            return
+        remote = getattr(self, "sync_gateway", None)
+        if not remote:
+            logger("Sync not available on server.")
+            return
+        try:
+            res = remote(target_account)
+            if res is not None:
+                logger(str(res))
+        except Exception as e:
+            logger(f"Sync failed: {e}")
+
+    def _resolve_default_account(self) -> str:
+        default_account = self.config.get_default_account_name()
+        if default_account and (not self.available_accounts or default_account in self.available_accounts):
+            return default_account
+        if self.available_accounts:
+            return self.available_accounts[0]
         return "WEBULL"
 
-    def _load_gateways(self) -> List[str]:
+    def _load_accounts(self) -> List[str]:
         accounts = self.config.get_all_accounts()
-        gateways = [acct.get("name") for acct in accounts if acct.get("name")]
-        return gateways
+        account_names = [acct.get("name") for acct in accounts if acct.get("name")]
+        return account_names
 
 def main():
     client = JanusRpcClient()
@@ -231,6 +270,7 @@ def main():
     # 将历史记录路径传给 TUI
     tui = JanusTUI(client, history_path=history_file)
     client.tui = tui 
+    client.request_sync(log_func=tui.log)
     
     try:
         tui.app.run()

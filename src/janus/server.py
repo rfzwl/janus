@@ -41,15 +41,32 @@ class JanusServer:
 
         self.rpc_engine.server.register(self.remote_exit)
         self.rpc_engine.server.register(self.sync_all)
+        self.rpc_engine.server.register(self.sync_gateway)
 
     def sync_all(self):
         """主动触发所有 Gateway 同步数据"""
         for gateway_name in self.main_engine.gateways.keys():
             gateway = self.main_engine.get_gateway(gateway_name)
             if gateway:
-                gateway.query_account()
-                gateway.query_position()
+                self._sync_gateway(gateway)
         return "Sync request sent to all gateways."
+
+    def sync_gateway(self, gateway_name: str):
+        """主动触发指定 Gateway 同步数据"""
+        gateway = self.main_engine.get_gateway(gateway_name)
+        if not gateway:
+            return f"Gateway not found: {gateway_name}"
+        self._sync_gateway(gateway)
+        return f"Sync request sent to {gateway_name}."
+
+    @staticmethod
+    def _sync_gateway(gateway):
+        if hasattr(gateway, "query_account"):
+            gateway.query_account()
+        if hasattr(gateway, "query_position"):
+            gateway.query_position()
+        if hasattr(gateway, "query_open_orders"):
+            gateway.query_open_orders()
 
     def _sanitize_log_event(self, event) -> None:
         """

@@ -1,6 +1,4 @@
 import logging
-import threading
-import time
 import uuid
 from typing import Any, Dict, Optional
 
@@ -48,9 +46,6 @@ class WebullOfficialGateway(BaseGateway):
         self.app_secret = ""
         self.region_id = "us"
         
-        self.active = False
-        self.poll_thread = None
-        self.query_interval = 2  # 轮询间隔(秒)
         self._last_position_directions: Dict[str, Direction] = {}
 
     def connect(self, setting: Dict[str, Any]):
@@ -122,10 +117,7 @@ class WebullOfficialGateway(BaseGateway):
             self.query_account()
             self.query_position()
 
-            # 5. 暂时禁用轮询线程 (准备转向事件驱动)
-            # self.active = True
-            # self.poll_thread = threading.Thread(target=self._polling_loop)
-            # self.poll_thread.start()
+            # 5. 轮询已取消，后续由客户端主动同步触发
 
         except Exception as e:
             self.on_log(f"连接异常: {e}")
@@ -291,6 +283,10 @@ class WebullOfficialGateway(BaseGateway):
                             pnl=0,
                             gateway_name=self.gateway_name
                         )
+                        pos.last_price = None
+                        pos.market_value = None
+                        pos.cost = None
+                        pos.diluted_cost = None
                         self.on_position(pos)
                     self._last_position_directions.clear()
                     return
@@ -298,13 +294,18 @@ class WebullOfficialGateway(BaseGateway):
                 latest_positions: Dict[str, Direction] = {}
                 for item in pos_list:
                     ticker = item.get("ticker", {})
-                    symbol = ticker.get("symbol")
+                    symbol = ticker.get("symbol") or item.get("symbol")
                     if not symbol:
                         continue
 
                     # 持仓数量
-                    volume = float(item.get("position", 0))
-                    
+                    raw_qty = item.get("position")
+                    if raw_qty is None:
+                        raw_qty = item.get("quantity")
+                    if raw_qty is None:
+                        raw_qty = 0
+                    volume = self._safe_float(raw_qty) or 0
+
                     # 判断方向 (简单逻辑: 正数为多)
                     direction = Direction.LONG
                     if volume < 0:
@@ -312,15 +313,34 @@ class WebullOfficialGateway(BaseGateway):
                         volume = abs(volume)
 
                     latest_positions[symbol] = direction
+                    last_price = self._safe_float(self._pick_value(item, "last_price", "lastPrice"))
+                    market_value = self._safe_float(self._pick_value(item, "market_value", "marketValue"))
+                    cost = self._safe_float(self._pick_value(item, "cost", "costPrice"))
+                    diluted_cost = self._safe_float(self._pick_value(
+                        item,
+                        "diluted_cost",
+                        "dilutedCost",
+                        "diluted_cost_price",
+                        "dilutedCostPrice",
+                        "costPrice",
+                        "cost_price",
+                    ))
+                    if diluted_cost is None and cost is not None and volume:
+                        diluted_cost = cost / volume
+                    pnl = self._safe_float(self._pick_value(item, "unrealized_profit_loss", "unrealizedProfitLoss")) or 0
                     pos = PositionData(
                         symbol=symbol,
                         exchange=Exchange.SMART,
                         direction=direction,
                         volume=volume,
-                        price=float(item.get("costPrice", 0)), # 持仓成本
-                        pnl=float(item.get("unrealizedProfitLoss", 0)), # 未实现盈亏
+                        price=cost or 0, # 持仓成本
+                        pnl=pnl, # 未实现盈亏
                         gateway_name=self.gateway_name
                     )
+                    pos.last_price = last_price
+                    pos.market_value = market_value
+                    pos.cost = cost
+                    pos.diluted_cost = diluted_cost
                     self.on_position(pos)
                 self._last_position_directions = latest_positions
             else:
@@ -335,34 +355,11 @@ class WebullOfficialGateway(BaseGateway):
         pass
 
     def close(self):
-        self.active = False
-        if self.poll_thread:
-            self.poll_thread.join()
+        pass
 
-    def _polling_loop(self):
+    def query_open_orders(self):
         """
-        轮询线程: 定期同步订单、资金和持仓
-        """
-        count = 0
-        while self.active:
-            try:
-                # 1. 轮询订单 (高频: 每次循环都查)
-                self._poll_orders()
-                
-                # 2. 轮询资金和持仓 (低频: 每5次循环查一次，即约10秒)
-                if count % 5 == 0:
-                    self.query_account()
-                    self.query_position()
-                
-                count += 1
-            except Exception as e:
-                self.on_log(f"轮询出错: {e}")
-            
-            time.sleep(self.query_interval)
-
-    def _poll_orders(self):
-        """
-        轮询未完成订单
+        查询未完成订单
         """
         if not self.trade_client: return
         try:
@@ -374,6 +371,14 @@ class WebullOfficialGateway(BaseGateway):
                 for item in orders_list:
                     # 状态映射逻辑需根据实际返回完善，此处简化为 NOTTRADED
                     status = Status.NOTTRADED
+                    direction = None
+                    side = self._pick_value(item, "action", "side", "orderAction", "order_action")
+                    if isinstance(side, str):
+                        side = side.upper()
+                        if side in ("BUY", "BUY_OPEN", "BUY_TO_COVER"):
+                            direction = Direction.LONG
+                        elif side in ("SELL", "SELL_SHORT", "SELL_TO_OPEN"):
+                            direction = Direction.SHORT
                     
                     # 尝试解析 filledQuantity
                     traded = float(item.get("filledQuantity", 0))
@@ -386,6 +391,7 @@ class WebullOfficialGateway(BaseGateway):
                         orderid=str(item.get("orderId")),
                         symbol=item.get("ticker", {}).get("symbol", ""),
                         exchange=Exchange.SMART,
+                        direction=direction,
                         price=float(item.get("lmtPrice", 0)),
                         volume=total,
                         traded=traded,
@@ -406,3 +412,19 @@ class WebullOfficialGateway(BaseGateway):
             logger.propagate = False
             if logger.hasHandlers():
                 logger.handlers.clear()
+
+    @staticmethod
+    def _pick_value(item: Dict[str, Any], *keys: str) -> Any:
+        for key in keys:
+            if key in item and item[key] not in (None, ""):
+                return item[key]
+        return None
+
+    @staticmethod
+    def _safe_float(value: Any) -> Optional[float]:
+        if value in (None, ""):
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
