@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 import unittest
+from unittest import mock
 
 sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -121,6 +122,25 @@ class WebullGatewayTests(unittest.TestCase):
 
         self.assertTrue(trade_client.account_v2.account_list_called)
         self.assertEqual(gateway.account_id, "123")
+
+    def test_connect_uses_injected_api_client(self):
+        api_client = object()
+
+        class TradeClientSpy:
+            def __init__(self, api_client_arg):
+                self.api_client_arg = api_client_arg
+                self.account_v2 = FakeAccountV2(
+                    [{"account_id": "123"}],
+                    {"total_net_liquidation_value": 0, "total_cash_balance": 0},
+                    []
+                )
+
+        with mock.patch("janus.gateway.webull.webull_gateway.TradeClient", TradeClientSpy):
+            gateway = CapturingGateway(self.event_engine, api_client=api_client)
+            gateway.connect({})
+
+        self.assertIs(gateway.api_client, api_client)
+        self.assertIs(gateway.trade_client.api_client_arg, api_client)
 
     def test_send_order_uses_response_order_id(self):
         trade_client = self._make_trade_client()
