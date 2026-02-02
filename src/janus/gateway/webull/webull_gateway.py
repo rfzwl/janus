@@ -47,6 +47,7 @@ class WebullOfficialGateway(BaseGateway):
         self.region_id = "us"
         
         self._last_position_directions: Dict[str, Direction] = {}
+        self._known_orders: Dict[str, OrderData] = {}
 
     def connect(self, setting: Dict[str, Any]):
         """
@@ -189,6 +190,7 @@ class WebullOfficialGateway(BaseGateway):
                 order = req.create_order_data(wb_order_id, self.gateway_name)
                 order.status = Status.NOTTRADED
                 self.on_order(order)
+                self._known_orders[order.orderid] = order
 
                 return order.vt_orderid
             else:
@@ -371,6 +373,7 @@ class WebullOfficialGateway(BaseGateway):
             if resp.status_code == 200:
                 data = resp.json()
                 orders_list = self._extract_list(data)
+                current_open_orders: Dict[str, OrderData] = {}
 
                 for item in orders_list:
                     if not isinstance(item, dict):
@@ -459,6 +462,17 @@ class WebullOfficialGateway(BaseGateway):
                         status=status,
                         gateway_name=self.gateway_name
                     )
+                    self.on_order(order)
+                    current_open_orders[order.orderid] = order
+                    self._known_orders[order.orderid] = order
+
+                missing_order_ids = set(self._known_orders) - set(current_open_orders)
+                for order_id in missing_order_ids:
+                    order = self._known_orders.get(order_id)
+                    if not order or not order.is_active():
+                        continue
+                    order.status = Status.ALLTRADED
+                    order.traded = order.volume
                     self.on_order(order)
         except Exception:
             pass
