@@ -210,7 +210,7 @@ class JanusRpcClient(RpcClient):
             }
             
             account = account_override or self.default_account
-            order_id = self.send_order(req, account)
+            order_id = self.send_order_intent(req, account)
             self.log_callback(f"Order sent: {order_id} (account {account})")
             
         except Exception as e:

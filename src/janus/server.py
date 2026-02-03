@@ -11,6 +11,7 @@ from vnpy_rpcservice import RpcServiceApp
 from .gateway.webull.webull_gateway import WebullOfficialGateway
 from .config import ConfigLoader
 from .symbol_registry import SymbolRegistry
+from vnpy.trader.constant import Exchange
 
 logging.basicConfig(level=logging.WARNING, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 sys_logger = logging.getLogger("JanusBootstrap")
@@ -23,6 +24,7 @@ class JanusServer:
         self.main_engine = MainEngine(self.event_engine)
         self.stop_event = Event()
         self.symbol_registry = self._init_symbol_registry()
+        self.account_broker = self._load_account_brokers()
 
         # 1. 加载 App
         self.main_engine.add_app(RpcServiceApp)
@@ -44,6 +46,7 @@ class JanusServer:
         self.rpc_engine.server.register(self.remote_exit)
         self.rpc_engine.server.register(self.sync_all)
         self.rpc_engine.server.register(self.sync_gateway)
+        self.rpc_engine.server.register(self.send_order_intent)
 
     def _init_symbol_registry(self) -> SymbolRegistry:
         try:
@@ -52,6 +55,41 @@ class JanusServer:
         except Exception as exc:
             sys_logger.error(f"Failed to initialize symbol registry: {exc}")
             sys.exit(1)
+
+    def _load_account_brokers(self) -> dict:
+        mapping = {}
+        for acct in self.config.get_all_accounts():
+            name = acct.get("name")
+            broker = acct.get("broker", "").lower()
+            if name:
+                mapping[name] = broker
+        return mapping
+
+    def send_order_intent(self, req: dict, gateway_name: str) -> str:
+        if not isinstance(req, dict):
+            raise ValueError("Order intent must be a dict")
+
+        broker = self.account_broker.get(gateway_name)
+        if not broker:
+            raise ValueError(f"Unknown account: {gateway_name}")
+
+        symbol = req.get("symbol")
+        if not symbol:
+            raise ValueError("Order intent missing symbol")
+
+        intent = dict(req)
+
+        if broker == "webull":
+            record = self.symbol_registry.ensure_webull_symbol(symbol)
+            intent["symbol"] = record.webull_ticker or record.canonical_symbol
+        elif broker == "ib":
+            record = self.symbol_registry.get_by_canonical(symbol)
+            if not record or not record.ib_conid:
+                raise ValueError(f"IB conId missing for symbol {symbol}")
+            intent["symbol"] = str(record.ib_conid)
+            intent["exchange"] = Exchange.SMART
+
+        return self.main_engine.send_order(intent, gateway_name)
 
     def sync_all(self):
         """主动触发所有 Gateway 同步数据"""
