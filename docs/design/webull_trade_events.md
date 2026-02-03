@@ -5,6 +5,10 @@
 - Update local order/position/account state promptly on events.
 - Notify Janus client via vn.py event flow (gateway -> EventEngine -> RPC -> TUI).
 
+## Terminology
+- **gateway_name**: account alias in Janus (the name passed to `add_gateway`).
+- **broker**: broker type from config (e.g., webull, ib).
+
 ## Context (vn.py Architecture Constraints)
 - BaseGateway methods must be thread-safe, non-blocking, and auto-reconnect. See `../vnpy_all/vnpy/vnpy/trader/gateway.py`.
 - `connect()` should perform initial snapshot queries (account/position/orders/trades/contracts) and push via `on_*`.
@@ -22,14 +26,14 @@
 - Manager keyed by (app_key, app_secret, region_id, host). Account_id is membership, not a key.
 - Each Webull gateway registers its account_id and a callback with the manager.
 - Manager owns EventsClient lifecycle and calls `do_subscribe([account_ids])`.
-- EventsClient callback dispatches to the correct gateway by account_id.
+- EventsClient callback dispatches to the correct gateway (account alias) by account_id.
 
 **Alternative: per-gateway EventsClient**
 - Simpler wiring but risks `NumOfConnExceed` if multiple accounts share app key.
 - Use only if it is guaranteed one account per app key.
 
 ## Data Flow
-Webull gRPC -> EventsClient -> TradeEventsManager -> Webull gateway -> EventEngine -> RpcService -> Janus client -> TUI
+Webull gRPC -> EventsClient -> TradeEventsManager -> Webull gateway (account alias) -> EventEngine -> RpcService -> Janus client -> TUI
 
 ## TradeEventsManager Type
 - Not a vn.py built-in class. Implement as a plain helper owned by the server (or a custom Engine if you want lifecycle hooks).
@@ -39,7 +43,7 @@ Webull gRPC -> EventsClient -> TradeEventsManager -> Webull gateway -> EventEngi
 - One dedicated daemon thread per TradeEventsManager instance (per credential group).
 - Thread runs blocking `do_subscribe([account_ids])` and yields events via callback.
 - Registry is thread-safe: account_id -> gateway callback; protect with a lock.
-- Callback should be lightweight: parse payload, create/update OrderData, call `gateway.on_order`.
+- Callback should be lightweight: parse payload, create/update OrderData, call `gateway.on_order` on the account gateway.
 - Heavy refresh work (query_position/account/open_orders) is debounced and executed asynchronously to avoid blocking.
 - Reconnect loop lives in the same thread: on SubscribeExpired/NumOfConnExceed, backoff then re-subscribe.
 - Shutdown: set stop flag, close client channel if available, join thread before MainEngine close.
