@@ -46,6 +46,10 @@ class JanusTUI:
             height=Dimension(min=3, weight=1),
             style="class:status",
         )
+        self.status_frame = Frame(
+            self.status_window,
+            title=self._orders_title_for(self.rpc_client.default_account),
+        )
 
         # Positions Area
         self.positions_control = FormattedTextControl(text=self.get_positions_text)
@@ -54,11 +58,15 @@ class JanusTUI:
             height=Dimension(min=3, weight=1),
             style="class:positions",
         )
+        self.positions_frame = Frame(
+            self.positions_window,
+            title=self._positions_title_for(self.rpc_client.default_account),
+        )
 
         # Layout
         self.root_container = HSplit([
-            Frame(self.status_window, title="Open Orders"),
-            Frame(self.positions_window, title="Positions"),
+            self.status_frame,
+            self.positions_frame,
             Frame(self.output_field, title="Logs"),
             Frame(self.input_field, title="Input"),
         ])
@@ -94,12 +102,22 @@ class JanusTUI:
     def update_prompt(self, account_name: str):
         """Update the input prompt to reflect current account."""
         self.input_field.prompt = self._prompt_for(account_name)
+        self.status_frame.title = self._orders_title_for(account_name)
+        self.positions_frame.title = self._positions_title_for(account_name)
         if self.app.is_running:
             self.app.invalidate()
 
     @staticmethod
     def _prompt_for(account_name: str) -> str:
         return f"({account_name}) > "
+
+    @staticmethod
+    def _positions_title_for(account_name: str) -> str:
+        return f"Positions ({account_name})"
+
+    @staticmethod
+    def _orders_title_for(account_name: str) -> str:
+        return f"Open Orders ({account_name})"
 
     def log(self, message: str):
         """Append text to output area"""
