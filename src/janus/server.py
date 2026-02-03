@@ -1,5 +1,6 @@
 import sys
 import logging
+import argparse
 from threading import Event
 
 from vnpy.event import EventEngine
@@ -9,6 +10,7 @@ from vnpy.trader.object import LogData
 from vnpy_rpcservice import RpcServiceApp
 
 from .gateway.webull.webull_gateway import WebullOfficialGateway
+from .gateway.ib.ib_gateway import JanusIbGateway
 from .config import ConfigLoader
 from .symbol_registry import SymbolRegistry
 from vnpy.trader.constant import Exchange
@@ -17,7 +19,7 @@ logging.basicConfig(level=logging.WARNING, format="%(asctime)s - %(name)s - %(le
 sys_logger = logging.getLogger("JanusBootstrap")
 
 class JanusServer:
-    def __init__(self):
+    def __init__(self, use_remote_ib: bool = False):
         self.config = ConfigLoader()
         self.event_engine = EventEngine()
         self.event_engine.register(EVENT_LOG, self._sanitize_log_event)
@@ -25,6 +27,7 @@ class JanusServer:
         self.stop_event = Event()
         self.symbol_registry = self._init_symbol_registry()
         self.account_broker = self._load_account_brokers()
+        self.use_remote_ib = use_remote_ib
 
         # 1. 加载 App
         self.main_engine.add_app(RpcServiceApp)
@@ -32,6 +35,7 @@ class JanusServer:
         # 2. 注册 Gateway 类 (Map 结构)
         self.broker_map = {
             "webull": WebullOfficialGateway,
+            "ib": JanusIbGateway,
             # "ib": IbGateway,
         }
 
@@ -176,7 +180,19 @@ class JanusServer:
             self.main_engine.add_gateway(gateway_class, acct_name)
             acct_setting = dict(acct_config)
             acct_setting["symbol_registry"] = self.symbol_registry
-            self.main_engine.connect(acct_setting, acct_name)
+            if broker_type == "ib" and self.use_remote_ib:
+                host_remote = acct_setting.get("host_remote")
+                port_remote = acct_setting.get("port_remote")
+                if host_remote:
+                    acct_setting["host"] = host_remote
+                if port_remote:
+                    acct_setting["port"] = port_remote
+            try:
+                self.main_engine.connect(acct_setting, acct_name)
+            except Exception as exc:
+                sys_logger.error(f"Connect failed for {acct_name} ({broker_type}): {exc}")
+                if not self._prompt_continue():
+                    self.shutdown()
 
         # 5. 启动 RPC 服务
         rpc_setting = self.config.get_rpc_setting()
@@ -206,5 +222,16 @@ class JanusServer:
         self.main_engine.close()
         sys.exit(0)
 
+    @staticmethod
+    def _prompt_continue() -> bool:
+        try:
+            answer = input("Continue startup? [y/N]: ").strip().lower()
+        except EOFError:
+            return False
+        return answer in ("y", "yes")
+
 if __name__ == "__main__":
-    JanusServer().run()
+    parser = argparse.ArgumentParser(description="Janus Server")
+    parser.add_argument("-r", "--remote", action="store_true", help="Use remote IB host/port")
+    args = parser.parse_args()
+    JanusServer(use_remote_ib=args.remote).run()
