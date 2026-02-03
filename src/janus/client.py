@@ -52,7 +52,10 @@ class JanusRpcClient(RpcClient):
 
     def get_positions(self, account: Optional[str] = None) -> List[PositionData]:
         target_account = account or self.default_account
-        return [pos for pos in self.positions.values() if pos.gateway_name == target_account]
+        return [
+            pos for pos in self.positions.values()
+            if pos.gateway_name == target_account and (pos.volume or 0) > 0
+        ]
 
     def process_command(self, cmd: str, log_func: Callable):
         self.log_callback = log_func

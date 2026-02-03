@@ -344,6 +344,23 @@ class WebullOfficialGateway(BaseGateway):
                     pos.cost = cost
                     pos.diluted_cost = diluted_cost
                     self.on_position(pos)
+                missing_symbols = set(self._last_position_directions) - set(latest_positions)
+                for symbol in missing_symbols:
+                    direction = self._last_position_directions.get(symbol, Direction.LONG)
+                    pos = PositionData(
+                        symbol=symbol,
+                        exchange=Exchange.SMART,
+                        direction=direction,
+                        volume=0,
+                        price=0,
+                        pnl=0,
+                        gateway_name=self.gateway_name
+                    )
+                    pos.last_price = None
+                    pos.market_value = None
+                    pos.cost = None
+                    pos.diluted_cost = None
+                    self.on_position(pos)
                 self._last_position_directions = latest_positions
             else:
                 self.on_log(f"查询持仓失败: {resp.status_code}")
