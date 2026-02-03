@@ -10,6 +10,7 @@ from vnpy_rpcservice import RpcServiceApp
 
 from .gateway.webull.webull_gateway import WebullOfficialGateway
 from .config import ConfigLoader
+from .symbol_registry import SymbolRegistry
 
 logging.basicConfig(level=logging.WARNING, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 sys_logger = logging.getLogger("JanusBootstrap")
@@ -21,6 +22,7 @@ class JanusServer:
         self.event_engine.register(EVENT_LOG, self._sanitize_log_event)
         self.main_engine = MainEngine(self.event_engine)
         self.stop_event = Event()
+        self.symbol_registry = self._init_symbol_registry()
 
         # 1. 加载 App
         self.main_engine.add_app(RpcServiceApp)
@@ -42,6 +44,14 @@ class JanusServer:
         self.rpc_engine.server.register(self.remote_exit)
         self.rpc_engine.server.register(self.sync_all)
         self.rpc_engine.server.register(self.sync_gateway)
+
+    def _init_symbol_registry(self) -> SymbolRegistry:
+        try:
+            db_setting = self.config.get_database_setting()
+            return SymbolRegistry(db_setting)
+        except Exception as exc:
+            sys_logger.error(f"Failed to initialize symbol registry: {exc}")
+            sys.exit(1)
 
     def sync_all(self):
         """主动触发所有 Gateway 同步数据"""
@@ -126,7 +136,9 @@ class JanusServer:
 
             sys_logger.info(f"Connecting to account: {acct_name} ({broker_type})")
             self.main_engine.add_gateway(gateway_class, acct_name)
-            self.main_engine.connect(acct_config, acct_name)
+            acct_setting = dict(acct_config)
+            acct_setting["symbol_registry"] = self.symbol_registry
+            self.main_engine.connect(acct_setting, acct_name)
 
         # 5. 启动 RPC 服务
         rpc_setting = self.config.get_rpc_setting()

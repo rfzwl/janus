@@ -29,3 +29,15 @@ class ConfigLoader:
             return self.config["default_account"]
         accounts = self.get_all_accounts()
         return accounts[0]["name"] if accounts else ""
+
+    def get_database_setting(self) -> Dict[str, Any]:
+        """获取数据库配置"""
+        defaults = {
+            "name": "postgres",
+            "host": "localhost",
+            "port": 5432,
+        }
+        setting = self.config.get("database", {})
+        if not isinstance(setting, dict):
+            return defaults
+        return {**defaults, **setting}

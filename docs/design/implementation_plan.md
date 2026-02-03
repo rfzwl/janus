@@ -10,9 +10,9 @@ This plan consolidates the phased steps from:
 2) Create the thin registry table:
    - `id` PK, `canonical_symbol` unique, plus broker fields (ib_conid, webull_ticker, etc.).
 3) Implement read-only registry lookup path and in-memory cache in server startup.
-4) Define auto-fill rule for IB lookup:
-   - Apply default market filter (US + SMART).
-   - If unique, store ib_conid; if multiple, do not write and return error.
+4) Webull bootstrap validation:
+   - On Webull account connect, read holdings and resolve via registry.
+   - Write back only when lookup result is unique.
 
 ## Phase 2 — IB gateway bootstrap
 1) Add IB gateway class to broker_map and extend config (host/port/client id/account).
@@ -20,6 +20,7 @@ This plan consolidates the phased steps from:
 3) When holdings load, perform symbol lookup + update:
    - Resolve canonical_symbol where possible.
    - Fill missing ib_conid via default market lookup.
+   - Apply default filter (US + SMART); only write on unique match.
 
 ## Phase 3 — Harmony command (MVP)
 1) Add client command `harmony`:
@@ -49,9 +50,6 @@ This plan consolidates the phased steps from:
    - Optional health check via EVENT_TIMER.
 
 ## Phase 7 — Polish
-1) Add health checks and improved logging.
-2) Add UI indicators for derived pricing (from IB ticks).
-3) Ensure graceful shutdown of trade-events threads and IB client threads.
 1) Add health checks and improved logging.
 2) Add UI indicators for derived pricing (from IB ticks).
 3) Ensure graceful shutdown of trade-events threads and IB client threads.

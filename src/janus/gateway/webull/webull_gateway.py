@@ -45,6 +45,7 @@ class WebullOfficialGateway(BaseGateway):
         self.app_key = ""
         self.app_secret = ""
         self.region_id = "us"
+        self.symbol_registry = None
         
         self._last_position_directions: Dict[str, Direction] = {}
         self._known_orders: Dict[str, OrderData] = {}
@@ -59,6 +60,7 @@ class WebullOfficialGateway(BaseGateway):
 
         injected_api_client = setting.get("api_client")
         injected_trade_client = setting.get("trade_client")
+        self.symbol_registry = setting.get("symbol_registry")
         if injected_api_client:
             self.api_client = injected_api_client
         if injected_trade_client:
@@ -299,6 +301,18 @@ class WebullOfficialGateway(BaseGateway):
                     symbol = ticker.get("symbol") or item.get("symbol")
                     if not symbol:
                         continue
+
+                    if self.symbol_registry:
+                        description = None
+                        if isinstance(ticker, dict):
+                            description = ticker.get("name") or ticker.get("shortName") or ticker.get("longName")
+                        if not description:
+                            description = item.get("name") or item.get("shortName") or item.get("longName")
+                        try:
+                            self.symbol_registry.ensure_webull_symbol(symbol, description=description)
+                        except Exception as exc:
+                            self.on_log(f"Symbol registry update failed for {symbol}: {exc}")
+                            raise
 
                     # 持仓数量
                     raw_qty = item.get("position")
