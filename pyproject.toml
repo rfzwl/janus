@@ -12,7 +12,10 @@ dependencies = [
     "protobuf==4.21.12", #required by webull
     "webull-openapi-python-sdk>=1.0.7",
     "psycopg>=3.1",
-    "vnpy_ib"
+    "vnpy_ib==9.81.1.0",
+    "ibapi",
+    "importlib_metadata",
+    "pytz"
 ]
 
 [tool.setuptools.packages.find]
