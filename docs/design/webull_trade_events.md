@@ -132,6 +132,20 @@ Webull gRPC -> EventsClient -> TradeEventsManager -> Webull gateway (account ali
 2) Is it acceptable to add the trade-events SDK dependency explicitly?
 3) For order updates, do you prefer immediate lightweight updates + async refresh, or always query order detail for accuracy?
 
+## Phased Implementation Plan
+1) Account registry + wiring
+   - Register account_id -> gateway_name after connect completes.
+   - Ensure manager uses account aliases (gateway_name) for dispatch.
+2) Subscription lifecycle
+   - Start TradeEventsManager after all accounts are connected.
+   - Implement connect/reconnect loop and graceful shutdown.
+3) Event handling
+   - Parse payload, update local order cache, emit on_order(copy(order)).
+   - Debounce snapshot refresh for account/position/open orders.
+4) Reliability
+   - Handle AuthError/SubscribeExpired/NumOfConnExceed with clear logs.
+   - Add optional health check on EVENT_TIMER.
+
 ## References
 - https://developer.webull.com/apis/docs/reference/custom/subscribe-trade-events/
 - ../vnpy_all/vnpy/vnpy/trader/gateway.py

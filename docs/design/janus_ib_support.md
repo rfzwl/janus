@@ -38,6 +38,7 @@
 - Store a registry:
   - canonical -> broker-specific (ib_symbol, ib_exchange, webull_symbol, market)
   - optionally allow conId for IB to avoid ambiguity.
+- IB auto-lookup should apply a default market/exchange filter (e.g., US + SMART) to reduce ambiguity.
 
 ### Where mapping lives
 - Config-driven mapping table, with defaults for simple US equities.
@@ -53,6 +54,10 @@
 - Important: market data does NOT change position quantity.
   - It only updates derived fields (market_value, unrealized PnL) for display.
 - If desired, publish derived position snapshots to clients on tick update (rate-limited).
+
+## Holdings-Driven Symbol Fill
+- When IB accounts are loaded and holdings are received, perform symbol lookup to fill missing registry fields.
+- Default filter applies (US + SMART) and only unique matches are persisted.
 
 ## Order Abstraction (Server Layer)
 ### OrderIntent (broker-agnostic)
@@ -119,3 +124,28 @@ Fields:
 3) Do we need per-symbol shortability flags or just per-account allow_short?
 4) For STOP_LIMIT mapping: are we OK with best-effort mapping if a broker lacks support?
 5) Should we publish derived position PnL updates to clients on tick, or only on explicit sync?
+
+## Harmony Command
+- Add client command `harmony` to request server-side symbol/id fill across all connected brokers.
+- Server should only write registry entries when lookup result is unique after default market filter.
+
+## Phased Implementation Plan
+1) Registry + Postgres (no trading changes)
+   - Create Postgres instance and symbol registry table.
+   - Implement read-only lookup path and in-memory cache.
+   - Add auto-fill via IB lookup with default market filter (US + SMART).
+   - If ambiguous, do not write; return clear error to caller.
+2) Order routing via registry
+   - Add server-side OrderIntent mapping to broker OrderRequest.
+   - Gate missing symbols: IB auto-lookup once; if still missing, reject with message.
+   - Keep Webull fallback to ticker only when canonical_symbol is allowed.
+3) IB gateway integration
+   - Add IB gateway to broker_map and config.
+   - Implement server API to subscribe IB ticks.
+   - Cache prices and compute derived valuation only (no position qty changes).
+4) Webull trade-events
+   - Add TradeEventsManager and account_id registry.
+   - Minimal order status/traded updates + debounced snapshot refresh.
+   - Reconnect and error handling.
+5) Polish
+   - Health checks, logging, and UI indicators for derived pricing.
