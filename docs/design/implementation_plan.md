@@ -7,7 +7,7 @@ This plan consolidates the phased steps from:
 
 ## Phase 1 — Registry + Postgres (foundation)
 1) Create a dedicated PostgreSQL instance for Janus symbol data.
-2) Create the thin registry table:
+2) Create the thin registry table (manual psql; Janus does not auto-create):
    - `id` PK, `canonical_symbol` unique, plus broker fields (ib_conid, webull_ticker, etc.).
 3) Implement read-only registry lookup path and in-memory cache in server startup.
 4) Webull bootstrap validation:

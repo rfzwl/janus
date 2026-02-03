@@ -25,10 +25,13 @@ Proposed fields:
 Notes:
 - `canonical_symbol` stays human-facing; `id` is for internal joins and future DB usage.
 - No status/source fields by design (keep it thin).
+- Uniqueness: `canonical_symbol`, `ib_conid`, and `webull_ticker` are enforced unique in the table.
 
 ## Storage Backend
 - Use a dedicated PostgreSQL instance for Janus symbol data.
 - This registry can be expanded later to store more symbol metadata in the same database.
+- If DB fields are missing from config, use defaults (dbname postgres, port 5432, no password).
+- Schema/table are created manually via psql; Janus does not auto-create metadata.
 
 ## Default Market Assumptions
 - For EQUITY, IB auto-lookup uses US + SMART as default filter.
@@ -43,6 +46,16 @@ Notes:
   2) If a unique match is found, store `ib_conid`.
   3) If multiple matches remain, do not write; require manual mapping.
  - Auto-fill can be triggered by holdings load or by the client `harmony` command.
+
+## Operational Rules (MVP)
+- Canonical normalization: trim + uppercase before lookup and store.
+- Webull holdings auto-insert: if only ticker is present, create row with canonical_symbol=ticker.
+- Webull mismatch: if canonical exists but webull_ticker differs, warn and skip (no overwrite).
+- Description: populate from broker; first value wins.
+- Cache strategy: startup load + write-through on updates.
+- Single-writer: no multiple Janus server instances writing to the same DB.
+- Postgres unavailable: hard-fail startup.
+- Unique constraint conflicts: raise error (do not silently ignore).
 
 ## Resolution Flow
 1) User input: `buy AAPL 10`
