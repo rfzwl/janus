@@ -69,5 +69,21 @@ Janus provides a flexible command system for managing multiple accounts from a s
 2. **Install (uv)**:
    - `uv venv`
    - `uv pip install -e . --python .venv`
-3. **Start Server**: Run `uv run python -m janus.server`. The server initializes all configured account connections.
-4. **Start Client**: Run `uv run python -m janus.client`. The client subscribes to all server-side event streams on connect.
+
+### IB + Webull in one environment
+
+The official IB API requires protobuf 5.x, while the Webull SDK pins protobuf 4.21.12. To run
+both in the same environment, install Webull with `--no-deps` and avoid `uv` syncing.
+
+Bootstrap helper:
+
+```
+./bootstrap.sh /path/to/ibapi/pythonclient
+```
+
+3. **Start Server**:
+   - `uv run --no-sync python -m janus.server` (recommended)
+   - or `.venv/bin/python -m janus.server`
+4. **Start Client**:
+   - `uv run --no-sync python -m janus.client` (recommended)
+   - or `.venv/bin/python -m janus.client`
