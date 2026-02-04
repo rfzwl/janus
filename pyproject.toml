@@ -2,7 +2,7 @@
 name = "janus"
 version = "0.1.0"
 description = "Distributed Asset Management System"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 dependencies = [
     "vnpy>=4.3.0",
     "vnpy_rpcservice",
