@@ -58,6 +58,7 @@
 ## Holdings-Driven Symbol Fill
 - When IB accounts are loaded and holdings are received, perform symbol lookup to fill missing registry fields.
 - Default filter applies (US + SMART) and only unique matches are persisted.
+- Reference behavior (from taurus): use `reqContractDetails`; if multiple ContractDetails are returned, treat as ambiguous and skip.
 
 ## Order Abstraction (Server Layer)
 ### OrderIntent (broker-agnostic)
