@@ -2,6 +2,7 @@ import sys
 import logging
 import argparse
 from threading import Event
+from typing import Any
 
 from vnpy.event import EventEngine
 from vnpy.trader.engine import MainEngine
@@ -13,7 +14,7 @@ from .gateway.webull.webull_gateway import WebullOfficialGateway
 from .gateway.ib.ib_gateway import JanusIbGateway
 from .config import ConfigLoader
 from .symbol_registry import SymbolRegistry
-from vnpy.trader.constant import Exchange
+from vnpy.trader.constant import Exchange, Direction, OrderType, Offset
 
 logging.basicConfig(level=logging.WARNING, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 sys_logger = logging.getLogger("JanusBootstrap")
@@ -70,6 +71,77 @@ class JanusServer:
                 mapping[name] = broker
         return mapping
 
+    @staticmethod
+    def _parse_exchange(value) -> Exchange:
+        if isinstance(value, Exchange):
+            return value
+        if not value:
+            return Exchange.SMART
+        if isinstance(value, str):
+            upper = value.upper()
+            for ex in Exchange:
+                if ex.value.upper() == upper or ex.name.upper() == upper:
+                    return ex
+        return Exchange.SMART
+
+    def _parse_order_intent(self, req: dict) -> dict:
+        if "direction" in req and "type" in req:
+            return req
+
+        action = req.get("action") or req.get("command") or req.get("side")
+        if not action:
+            raise ValueError("Order intent missing action")
+
+        symbol = req.get("symbol")
+        if not symbol:
+            raise ValueError("Order intent missing symbol")
+
+        volume = req.get("volume")
+        if volume is None:
+            raise ValueError("Order intent missing volume")
+
+        price = req.get("price")
+        stop_price = req.get("stop_price")
+        limit_price = req.get("limit_price")
+        exchange = self._parse_exchange(req.get("exchange"))
+        offset = req.get("offset", Offset.OPEN)
+
+        action = str(action).lower()
+        volume = float(volume)
+        intent: dict[str, Any] = {
+            "symbol": symbol,
+            "exchange": exchange,
+            "volume": volume,
+            "offset": offset,
+        }
+
+        if "reference" in req:
+            intent["reference"] = req["reference"]
+
+        if action in ("buy", "sell"):
+            intent["direction"] = Direction.LONG if action == "buy" else Direction.SHORT
+            if price is None:
+                intent["type"] = OrderType.MARKET
+                intent["price"] = 0
+            else:
+                intent["type"] = OrderType.LIMIT
+                intent["price"] = float(price)
+        elif action in ("bstop", "sstop"):
+            intent["direction"] = Direction.LONG if action == "bstop" else Direction.SHORT
+            if stop_price is None:
+                if price is None:
+                    raise ValueError("Stop order missing stop_price")
+                stop_price = price
+            intent["type"] = OrderType.STOP
+            intent["stop_price"] = float(stop_price)
+            intent["price"] = float(stop_price)
+            if limit_price is not None:
+                intent["limit_price"] = float(limit_price)
+        else:
+            raise ValueError(f"Unsupported order action: {action}")
+
+        return intent
+
     def send_order(self, req: dict, gateway_name: str) -> str:
         if not isinstance(req, dict):
             raise ValueError("Order intent must be a dict")
@@ -78,11 +150,8 @@ class JanusServer:
         if not broker:
             raise ValueError(f"Unknown account: {gateway_name}")
 
-        symbol = req.get("symbol")
-        if not symbol:
-            raise ValueError("Order intent missing symbol")
-
-        intent = dict(req)
+        intent = self._parse_order_intent(req)
+        symbol = intent.get("symbol")
 
         if broker == "webull":
             record = self.symbol_registry.ensure_webull_symbol(symbol)

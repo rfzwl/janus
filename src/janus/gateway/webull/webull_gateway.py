@@ -152,25 +152,35 @@ class WebullOfficialGateway(BaseGateway):
             )
         super().on_position(position)
     
-    def send_order(self, req: OrderRequest) -> str:
+    def send_order(self, req: OrderRequest | dict) -> str:
         """
         发送订单 (适配 Webull V2 接口)
         """
         if isinstance(req, dict):
+            stop_price = req.pop("stop_price", None)
+            limit_price = req.pop("limit_price", None)
             req = OrderRequest(**req)
+        else:
+            stop_price = getattr(req, "stop_price", None)
+            limit_price = getattr(req, "limit_price", None)
 
         if not self.trade_client:
             return ""
 
         # 1. 参数准备
         lmt_price = str(req.price)
-        
+        stop_price_value = None
+        if stop_price is not None:
+            stop_price_value = str(stop_price)
+        elif req.type == OrderType.STOP and req.price:
+            stop_price_value = str(req.price)
+
         # 映射 OrderType
         wb_order_type = "LIMIT"
         if req.type == OrderType.MARKET:
             wb_order_type = "MARKET"
         elif req.type == OrderType.STOP:
-            wb_order_type = "STOP"
+            wb_order_type = "STOP_LOSS_LIMIT" if limit_price is not None else "STOP_LOSS"
 
         params = {
             "client_order_id": uuid.uuid4().hex,
@@ -181,13 +191,20 @@ class WebullOfficialGateway(BaseGateway):
             "side": DIRECTION_VT2WB.get(req.direction, 'BUY'),
             "order_type": wb_order_type,
             "quantity": str(int(req.volume)),
-            "time_in_force": "DAY",
+            "time_in_force": "GTC",
             "entrust_type": "QTY",
             "support_trading_session": "N",
         }
 
         if req.type == OrderType.LIMIT:
             params["limit_price"] = lmt_price
+        elif req.type == OrderType.STOP:
+            if not stop_price_value:
+                self.on_log("下单异常: STOP 订单缺少 stop_price")
+                return ""
+            params["stop_price"] = stop_price_value
+            if limit_price is not None:
+                params["limit_price"] = str(limit_price)
 
         try:
             # 日志脱敏处理
@@ -198,6 +215,14 @@ class WebullOfficialGateway(BaseGateway):
                 account_id=self.account_id,
                 new_orders=[params],
             )
+
+            if resp.status_code != 200 and params["time_in_force"] == "GTC":
+                self.on_log("Webull 不支持 GTC，回退到 DAY")
+                params["time_in_force"] = "DAY"
+                resp = self.trade_client.order_v2.place_order(
+                    account_id=self.account_id,
+                    new_orders=[params],
+                )
 
             if resp.status_code == 200:
                 data = resp.json()

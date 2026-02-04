@@ -75,7 +75,7 @@ class JanusRpcClient(RpcClient):
 
     def _dispatch_command(self, parts: list, log_func: Callable, account_override: Optional[str] = None):
         match parts[0]:
-            case "buy" | "sell" | "short" | "cover":
+            case "buy" | "sell" | "bstop" | "sstop":
                 self._send_order_cmd(parts, account_override=account_override)
             case "cancel":
                 if len(parts) < 2:
@@ -140,7 +140,8 @@ class JanusRpcClient(RpcClient):
             "  account <name>           Switch default account",
             "  account list             List configured accounts (* is default)",
             "  account <name> <cmd...>  Run a command on an account without changing default",
-            "  buy|sell|short|cover <symbol> <volume> <price>",
+            "  buy|sell <symbol> <volume> [price] [exchange]",
+            "  bstop|sstop <symbol> <volume> <stop_price> [limit_price] [exchange]",
             "  cancel <vt_orderid>",
             "  connect                 Subscribe to all events",
             "  sync                    Sync account, positions, and open orders",
@@ -163,10 +164,10 @@ class JanusRpcClient(RpcClient):
                 "  - Use 'account list' to see configured accounts.",
                 "  - 'account <name> buy AAPL 1 100' routes only that command.",
             ]),
-            "buy": "Usage: buy <symbol> <volume> <price>",
-            "sell": "Usage: sell <symbol> <volume> <price>",
-            "short": "Usage: short <symbol> <volume> <price>",
-            "cover": "Usage: cover <symbol> <volume> <price>",
+            "buy": "Usage: buy <symbol> <volume> [price] [exchange]",
+            "sell": "Usage: sell <symbol> <volume> [price] [exchange]",
+            "bstop": "Usage: bstop <symbol> <volume> <stop_price> [limit_price] [exchange]",
+            "sstop": "Usage: sstop <symbol> <volume> <stop_price> [limit_price] [exchange]",
             "cancel": "Usage: cancel <vt_orderid>",
             "connect": "Usage: connect  (subscribe to all events)",
             "sync": "Usage: sync  (sync current account)",
@@ -188,35 +189,66 @@ class JanusRpcClient(RpcClient):
             lines.append(f"{marker} {name}")
         log_func("\n".join(lines))
 
+    def _parse_exchange(self, token: str) -> Optional[Exchange]:
+        value = token.strip().upper()
+        for ex in Exchange:
+            if ex.value.upper() == value or ex.name.upper() == value:
+                return ex
+        return None
+
     def _send_order_cmd(self, parts: list, account_override: Optional[str] = None):
-        if len(parts) < 4:
-            self.log_callback("Usage: <action> <symbol> <volume> <price> [exchange]")
+        if len(parts) < 3:
+            self.log_callback("Usage: <action> <symbol> <volume> [price]")
             return
 
-        direction_map = {
-            "buy": Direction.LONG, "sell": Direction.SHORT,
-            "short": Direction.SHORT, "cover": Direction.LONG
-        }
-        
+        action = parts[0]
+        args = parts[1:]
+        exchange = None
+        if args:
+            maybe_exchange = self._parse_exchange(args[-1])
+            if maybe_exchange:
+                exchange = maybe_exchange
+                args = args[:-1]
+
         try:
-            symbol = parts[1]
-            volume = float(parts[2])
-            price = float(parts[3])
-            
-            req = {
-                "symbol": symbol,
-                "exchange": Exchange.SMART, 
-                "direction": direction_map[parts[0]],
-                "type": OrderType.LIMIT,
-                "volume": volume,
-                "price": price,
-                "offset": Offset.OPEN 
-            }
-            
+            if action in ("buy", "sell"):
+                if len(args) not in (2, 3):
+                    raise ValueError("Usage: buy|sell <symbol> <volume> [price] [exchange]")
+                symbol = args[0]
+                volume = float(args[1])
+                price = float(args[2]) if len(args) == 3 else None
+                req = {
+                    "action": action,
+                    "symbol": symbol,
+                    "volume": volume,
+                    "exchange": exchange or Exchange.SMART,
+                }
+                if price is not None:
+                    req["price"] = price
+            elif action in ("bstop", "sstop"):
+                if len(args) not in (3, 4):
+                    raise ValueError(
+                        "Usage: bstop|sstop <symbol> <volume> <stop_price> [limit_price] [exchange]"
+                    )
+                symbol = args[0]
+                volume = float(args[1])
+                stop_price = float(args[2])
+                limit_price = float(args[3]) if len(args) == 4 else None
+                req = {
+                    "action": action,
+                    "symbol": symbol,
+                    "volume": volume,
+                    "exchange": exchange or Exchange.SMART,
+                    "stop_price": stop_price,
+                }
+                if limit_price is not None:
+                    req["limit_price"] = limit_price
+            else:
+                raise ValueError(f"Unsupported command: {action}")
+
             account = account_override or self.default_account
             order_id = self.send_order(req, account)
             self.log_callback(f"Order sent: {order_id} (account {account})")
-            
         except Exception as e:
             self.log_callback(f"Order Error: {e}")
 

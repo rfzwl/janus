@@ -49,7 +49,8 @@ Janus provides a flexible command system for managing multiple accounts from a s
 
 **Core commands**
 
-- `buy/sell/short/cover <symbol> <volume> <price>`: Place orders on the active account.
+- `buy/sell <symbol> <volume> [price] [exchange]`: Market if no price, otherwise limit.
+- `bstop/sstop <symbol> <volume> <stop_price> [limit_price] [exchange]`: Stop or stop-limit.
 - `cancel <vt_orderid>`: Cancel an existing order.
 - `account <name>`: Switch the current default account context.
 - `account list`: Show configured accounts, `*` marks the current default.
@@ -58,6 +59,8 @@ Janus provides a flexible command system for managing multiple accounts from a s
 - `sync`: Manual data refresh. Triggers the Janus Server to proactively request a full data update (Account & Positions)
   from all active account gateways. Use this to ensure the TUI display is aligned with the account's authoritative state.
 - `exit/quit`: Safely disconnect the client and close the terminal.
+
+See `docs/order_commands.md` for full order command details.
 
 **Strategy management (coming soon)**
 
@@ -72,16 +75,16 @@ Janus provides a flexible command system for managing multiple accounts from a s
 
 ### IB + Webull in one environment
 
-The official IB API requires protobuf 5.x, while the Webull SDK pins protobuf 4.21.12. To run
-both in the same environment, install vnpy_ib and Webull with `--no-deps` and avoid `uv` syncing.
+`ib_async` removes the need for the official IB pythonclient. The Webull SDK still pins
+protobuf 4.21.12, so we install it with `--no-deps` and avoid `uv` syncing.
 
 Bootstrap helper:
 
 ```
-./bootstrap.sh /path/to/ibapi/pythonclient
+./bootstrap.sh
 ```
 
-This installs base deps from `pyproject.toml`, then installs `vnpy_ib` and Webull SDK with
+This installs base deps from `pyproject.toml`, then installs `ib_async` and Webull SDK with
 `--no-deps` plus Webull's non-protobuf dependencies explicitly.
 
 3. **Start Server**:
