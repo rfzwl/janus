@@ -49,6 +49,15 @@ class SyncCapturingClient(JanusRpcClient):
         self.sync_calls.append(account or self.default_account)
 
 
+class HarmonyCapturingClient(JanusRpcClient):
+    def __init__(self):
+        super().__init__()
+        self.harmony_calls = 0
+
+    def request_harmony(self, log_func=None):
+        self.harmony_calls += 1
+
+
 class SnapshotSyncClient(JanusRpcClient):
     def __init__(self):
         super().__init__()
@@ -193,6 +202,12 @@ class ClientCommandTests(unittest.TestCase):
         positions = client.get_positions("acct1")
         self.assertEqual(len(positions), 1)
         self.assertEqual(positions[0].symbol, "AAPL")
+
+    def test_harmony_command_triggers_request(self):
+        client = HarmonyCapturingClient()
+        logs = []
+        client.process_command("harmony", logs.append)
+        self.assertEqual(client.harmony_calls, 1)
 
 
 if __name__ == "__main__":
