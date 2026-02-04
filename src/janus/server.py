@@ -86,7 +86,36 @@ class JanusServer:
 
     def _parse_order_intent(self, req: dict) -> dict:
         if "direction" in req and "type" in req:
-            return req
+            intent = dict(req)
+            intent["exchange"] = self._parse_exchange(intent.get("exchange"))
+            if "volume" not in intent or intent["volume"] is None:
+                raise ValueError("Order intent missing volume")
+            intent["volume"] = float(intent["volume"])
+
+            order_type = intent.get("type")
+            if not isinstance(order_type, OrderType):
+                raise ValueError("Order intent type must be OrderType")
+
+            if order_type == OrderType.MARKET:
+                intent.setdefault("price", 0)
+            elif order_type == OrderType.LIMIT:
+                if intent.get("price") is None:
+                    raise ValueError("Limit order missing price")
+                intent["price"] = float(intent["price"])
+            elif order_type == OrderType.STOP:
+                stop_price = intent.get("stop_price")
+                if stop_price is None:
+                    stop_price = intent.get("price")
+                if stop_price is None:
+                    raise ValueError("Stop order missing stop_price")
+                intent["stop_price"] = float(stop_price)
+                intent["price"] = float(stop_price)
+                if intent.get("limit_price") is not None:
+                    intent["limit_price"] = float(intent["limit_price"])
+            else:
+                raise ValueError(f"Unsupported order type: {order_type}")
+
+            return intent
 
         action = req.get("action") or req.get("command") or req.get("side")
         if not action:
