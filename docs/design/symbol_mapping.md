@@ -4,6 +4,7 @@
 - Eliminate ambiguity across brokers (IB vs Webull) by using a canonical symbol.
 - Present a unified symbol in UI/logs regardless of account.
 - Decouple broker-specific identifiers (e.g., IB conId) from core trading logic.
+- Client display rule: all symbols shown in holdings/open orders are canonical_symbol.
 
 ## Terminology
 - **canonical_symbol**: business-level symbol used in CLI/UI (e.g., AAPL).
@@ -58,6 +59,7 @@ Notes:
 
 ## Operational Rules (MVP)
 - Canonical normalization: trim + uppercase before lookup and store.
+- Gateways must map broker-specific symbols to canonical_symbol before publishing order/position events.
 - Webull holdings auto-insert: if only ticker is present, create row with canonical_symbol=ticker.
 - Webull mismatch: if canonical exists but webull_ticker differs, warn and skip (no overwrite).
 - Description: populate from broker; first value wins.
