@@ -33,7 +33,7 @@
 - For now, limit to US equities to avoid ambiguous mapping.
 
 ### Mapping rules
-- IB expects either a structured contract or a string form (e.g. "AAPL-USD-STK"); vnpy_ib supports both.
+- IB expects structured contracts (secType/exchange/currency/conId). `ib_async` supports building contracts directly.
 - Webull expects plain equity symbol (AAPL) and market=US.
 - Store a registry:
   - canonical -> broker-specific (ib_symbol, ib_exchange, webull_symbol, market)
@@ -90,10 +90,10 @@ Fields:
 - `allow_short` and `locate_required` should be per-account config flags.
 
 ### Stop order semantics
-- STOP BUY (stopb):
+- STOP BUY (bstop):
   - If only stop_price -> stop market buy
   - If stop_price + limit_price -> stop limit buy
-- STOP SELL (stops):
+- STOP SELL (sstop):
   - If only stop_price -> stop market sell
   - If stop_price + limit_price -> stop limit sell
 
@@ -101,7 +101,7 @@ Fields:
 - Add IB gateway class to Janus server broker_map.
 - Extend config.yaml.example with IB connection fields (host/port/client id/account).
 - Optionally add a "market_data_account" for centralized IB streaming.
-- Use vnpy_ib patterns for streaming data, reconnection, and order status updates.
+- Use `ib_async` for streaming data, reconnection, and order status updates.
 
 ## Cross-Broker Behavior Considerations
 - Orders and positions remain broker-specific; Janus should not merge them.
@@ -109,7 +109,7 @@ Fields:
 - If Webull position changes are shown using IB ticks, mark them clearly as "derived".
 
 ## Threading Model
-- IB EClient runs its own worker thread in vnpy_ib; callbacks call gateway.on_* (gateway instance == account alias).
+- `ib_async` runs an asyncio loop in a dedicated thread; callbacks call gateway.on_* (gateway instance == account alias).
 - Janus server should keep all heavy work (symbol mapping, order parsing) outside gateway callbacks.
 - Market data derived refresh should be debounced (e.g., 200-500ms) to avoid UI storms.
 

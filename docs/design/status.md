@@ -2,16 +2,15 @@
 
 ## Context
 Janus integrates multiple brokers (Webull + IB) via vn.py. We added a symbol registry
-and IB bootstrap, then implemented a `harmony` command to backfill missing symbols.
+and `harmony` to backfill missing symbols. IB gateway has been rewritten to use
+`ib_async` directly (no `vnpy_ib`, no `ibapi`).
 
 ## Environment & Dependencies
-- IB official TWS API `pythonclient` is required.
-- `vnpy_ib==10.30.1.1`.
+- IB uses `ib_async` (pure Python, no `ibapi`/TWS pythonclient).
 - **protobuf conflict**:
-  - IB official `ibapi` needs protobuf 5.x.
   - Webull SDK pins protobuf 4.21.12.
   - We **force** protobuf 5.x and install Webull SDK with `--no-deps`.
-- Runtime must avoid `uv` auto-sync:
+- Runtime should avoid `uv` auto-sync:
   - `uv run --no-sync python -m janus.server`
   - `uv run --no-sync python -m janus.client`
 
@@ -19,9 +18,8 @@ and IB bootstrap, then implemented a `harmony` command to backfill missing symbo
 - `bootstrap.sh` automates:
   - create `.venv`
   - install project
-  - install IB pythonclient
+  - install `ib_async`
   - install Webull SDK with `--no-deps`
-- Readme updated with this workflow.
 
 ## Symbol Registry (Phase 1)
 - Postgres table `janus.symbol_registry` (manual schema creation).
@@ -30,11 +28,11 @@ and IB bootstrap, then implemented a `harmony` command to backfill missing symbo
 - Webull holdings can create new entries; IB holdings fill conId.
 - DB down on startup => hard fail.
 
-## IB Integration (Phase 2)
-- `JanusIbGateway` wraps vnpy_ib.
+## IB Integration
+- `JanusIbGateway` uses `ib_async` directly.
 - IB holdings update registry for `STK` + USD only.
 - Non-equity holdings and non-USD: warn + skip.
-- Remote IB host/port supported with `-r/--remote`.
+- One IB connection per account; reconnect check every ~10s via EVENT_TIMER.
 
 ## Harmony (Phase 3)
 Server-only RPC; client triggers and shows summary.
@@ -51,17 +49,11 @@ Server-only RPC; client triggers and shows summary.
 
 ## Open Items / Phase 4
 Goal: support order types: market, limit, stop, stop-limit.
-Key unresolved decisions:
-- `stopb` / `stops` exact syntax (proposed: `stopb <symbol> <qty> <stop_price> [limit_price]`).
-- IB stop-limit:
-  - IB supports it, **vnpy_ib does not** (only STOP).
-  - Options: reject stop-limit for IB, or override `JanusIbGateway.send_order` to place
-    `STP LMT` order directly.
-- Webull stop/stop-limit:
-  - Confirm `order_type` values and `stop_price`/`limit_price` fields.
-- TIF=GTC:
-  - vn.py OrderRequest has no TIF; likely only apply to Webull gateway.
-- Error messaging format for mapping failures.
+Current decisions:
+- CLI syntax uses `bstop` / `sstop`.
+- IB stop-limit supported via `STP LMT`.
+- Webull stop/stop-limit use `STOP_LOSS` / `STOP_LOSS_LIMIT` with `stop_price` / `limit_price`.
+- TIF default is GTC (IB `tif="GTC"`); Webull GTC support is unclear in US docs, may require DAY fallback.
 
 ## Notes
 - `question.md` is used for temporary planning and should be discarded after

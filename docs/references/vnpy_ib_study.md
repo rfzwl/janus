@@ -1,4 +1,7 @@
-# vnpy_ib Study Summary
+# vnpy_ib Study Summary (Legacy Reference)
+
+Note: This document is kept for historical reference only. Janus no longer
+depends on `vnpy_ib` or `ibapi` at runtime.
 
 ## Scope
 对 `../vnpy_all/vnpy_ib` 中与“订单状态推送/事件回调/线程模型/本地状态维护”相关的实现做梳理，提炼可复用的模式，便于参考到 Janus/Webull trade events 设计中。

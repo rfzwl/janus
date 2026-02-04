@@ -14,6 +14,13 @@ accounts:
     app_secret: "YOUR_APP_SECRET"
     region_id: "us"
 
+  - name: "ib_main"               # IB 账户
+    broker: "ib"
+    host: "127.0.0.1"
+    port: 7497
+    client_id: 1
+    account: ""
+
 # RPC 服务配置
 rpc:
   rep_address: "tcp://*:2014"

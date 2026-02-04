@@ -2,6 +2,9 @@
 
 Sources:
 - `https_developer.webull.com_apis_home_260202/developer.webull.com/apis/docs/` (static HTML snapshot)
+- `https://developer.webull.com/api-doc/trade/order/place-order/` (live docs)
+- `https://developer.webull.com/api-doc/develop/dictionary/` (OrderType/OrderTIF reference)
+- `https://developer.webull.co.jp/api-doc/develop/dictionary/` (JP dictionary; includes GTC)
 
 Notes:
 - Authentication uses a digest signature with App Key/App Secret; HTTPS is required.
@@ -10,6 +13,21 @@ Notes:
 - Connect API uses OAuth 2.0 for third-party account authorization.
 - Market Data API supports HTTP and streaming (WebSocket/TCP) access; advanced quotes are a subscription service.
 - Trading API supports trading and order status change subscriptions via HTTP and gRPC; broker API is under construction.
+
+## Trading Order Types (OpenAPI Dictionary)
+- OrderType (U.S. stock, US site): `LIMIT`, `MARKET`, `STOP_LOSS`, `STOP_LOSS_LIMIT`, `TRAILING_STOP_LOSS`.
+- OrderTIF (US site): `DAY` only.
+- OrderTIF (JP site): includes `DAY` and `GTC`.
+- Conclusion: Webull US docs only guarantee `DAY`; `GTC` support is unclear. If `GTC` is required, test and fall back to `DAY` on errors.
+
+## Place Order (U.S. stocks/ETFs)
+- Endpoint: `POST /trade/order/place`
+- `stock_order` required fields include:
+- `client_order_id`, `side` (BUY/SELL), `tif`, `instrument_id`, `order_type`, `qty`, `extended_hours_trading`.
+- `limit_price` required for `LIMIT` and `STOP_LOSS_LIMIT`; must be >0.
+- `stop_price` required for `STOP_LOSS`, `STOP_LOSS_LIMIT`, `TRAILING_STOP_LOSS`; must be >0.
+- `trailing_type` + `trailing_stop_step` required for `TRAILING_STOP_LOSS`.
+- `extended_hours_trading=true` is only allowed for `LIMIT` orders.
 
 ## API Endpoints
 
@@ -122,4 +140,3 @@ Notes:
 | Preview Order | POST | `/openapi/trade/stock/order/preview` | - Function description: Calculate the estimated amount and cost based on the incoming information, and support simple orders. Only supports EQUITY. Rate limit: 150 requests every 10 seconds |
 | Replace Options | POST | `/openapi/trade/option/order/replace` | - Function description: Updates an existing order with new parameters; each one overrides the corresponding attribute. Only supports OPTION. Rate limit: 600 requests per minute |
 | Replace Order | POST | `/openapi/trade/stock/order/replace` | - Function description: Updates an existing order with new parameters; each one overrides the corresponding attribute. Only supports EQUITY. Rate limit: 600 requests per minute |
-

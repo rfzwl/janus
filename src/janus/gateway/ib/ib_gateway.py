@@ -1,16 +1,201 @@
-from typing import Optional, List
-from threading import Event, Lock
+import asyncio
+from copy import copy
+from datetime import datetime
+from threading import Event as ThreadEvent
+from threading import Lock, Thread
+from typing import Any, Dict, Optional
 
-from vnpy_ib.ib_gateway import IbGateway, IbApi
-from ibapi.contract import Contract, ContractDetails
+from ib_async import IB
+from ib_async.contract import Contract, Stock
+from ib_async.ib import StartupFetch
+from ib_async.order import LimitOrder, MarketOrder, StopLimitOrder, StopOrder
+from ib_async.ticker import Ticker
+from ib_async.util import isNan
+
+from vnpy.event import Event
+from vnpy.trader.event import EVENT_TIMER
+from vnpy.trader.gateway import BaseGateway
+from vnpy.trader.object import (
+    AccountData,
+    CancelRequest,
+    OrderData,
+    OrderRequest,
+    PositionData,
+    SubscribeRequest,
+    TickData,
+    TradeData,
+)
+from vnpy.trader.constant import Direction, Exchange, OrderType, Status
 
 
-class JanusIbApi(IbApi):
-    def __init__(self, gateway: IbGateway) -> None:
-        super().__init__(gateway)
-        self._harmony_lock = Lock()
-        self._harmony_events: dict[int, Event] = {}
-        self._harmony_results: dict[int, List[ContractDetails]] = {}
+STATUS_IB2VT: dict[str, Status] = {
+    "ApiPending": Status.SUBMITTING,
+    "PendingSubmit": Status.SUBMITTING,
+    "PreSubmitted": Status.NOTTRADED,
+    "Submitted": Status.NOTTRADED,
+    "ApiCancelled": Status.CANCELLED,
+    "Cancelled": Status.CANCELLED,
+    "Filled": Status.ALLTRADED,
+    "Inactive": Status.REJECTED,
+}
+
+DIRECTION_VT2IB: dict[Direction, str] = {
+    Direction.LONG: "BUY",
+    Direction.SHORT: "SELL",
+}
+DIRECTION_IB2VT: dict[str, Direction] = {
+    "BUY": Direction.LONG,
+    "SELL": Direction.SHORT,
+    "BOT": Direction.LONG,
+    "SLD": Direction.SHORT,
+}
+
+ORDERTYPE_VT2IB: dict[OrderType, str] = {
+    OrderType.LIMIT: "LMT",
+    OrderType.MARKET: "MKT",
+    OrderType.STOP: "STP",
+}
+ORDERTYPE_IB2VT: dict[str, OrderType] = {
+    "LMT": OrderType.LIMIT,
+    "MKT": OrderType.MARKET,
+    "STP": OrderType.STOP,
+    "STP LMT": OrderType.STOP,
+}
+
+EXCHANGE_VT2IB: dict[Exchange, str] = {
+    Exchange.SMART: "SMART",
+    Exchange.NYSE: "NYSE",
+    Exchange.NASDAQ: "NASDAQ",
+    Exchange.AMEX: "AMEX",
+    Exchange.ARCA: "ARCA",
+    Exchange.ISLAND: "ISLAND",
+    Exchange.BATS: "BATS",
+    Exchange.IEX: "IEX",
+}
+EXCHANGE_IB2VT: dict[str, Exchange] = {v: k for k, v in EXCHANGE_VT2IB.items()}
+
+ACCOUNTFIELD_IB2VT: dict[str, str] = {
+    "NetLiquidationByCurrency": "balance",
+    "NetLiquidation": "balance",
+    "UnrealizedPnL": "positionProfit",
+    "AvailableFunds": "available",
+    "MaintMarginReq": "margin",
+}
+
+
+class IbAsyncApi:
+    def __init__(self, gateway: "JanusIbGateway") -> None:
+        self.gateway = gateway
+        self.gateway_name = gateway.gateway_name
+
+        self.host: str = ""
+        self.port: int = 0
+        self.client_id: int = 0
+        self.account: str = ""
+
+        self._ib: Optional[IB] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._thread: Optional[Thread] = None
+
+        self._connected = False
+        self._connecting = False
+        self._stop_event = ThreadEvent()
+        self._loop_ready = ThreadEvent()
+        self._lock = Lock()
+
+        self._subscribed: Dict[str, Contract] = {}
+        self._accounts: Dict[str, AccountData] = {}
+        self._seen_trades: set[str] = set()
+        self._last_position_direction: Dict[str, Direction] = {}
+
+    @property
+    def status(self) -> bool:
+        return self._connected
+
+    def connect(self, host: str, port: int, client_id: int, account: str) -> None:
+        self.host = host
+        self.port = port
+        self.client_id = client_id
+        self.account = account
+
+        if not self._thread or not self._thread.is_alive():
+            self._thread = Thread(target=self._run_loop, daemon=True)
+            self._thread.start()
+
+        self._loop_ready.wait(timeout=2)
+        self._call_soon(self._ensure_connect)
+
+    def close(self) -> None:
+        if not self._loop:
+            return
+
+        def _shutdown() -> None:
+            if self._ib:
+                self._ib.disconnect()
+            if self._loop:
+                self._loop.stop()
+
+        self._call_soon(_shutdown)
+
+        if self._thread:
+            self._thread.join(timeout=2)
+
+    def check_connection(self) -> None:
+        self._call_soon(self._ensure_connect)
+
+    def subscribe(self, req: SubscribeRequest) -> None:
+        if not self._loop:
+            return
+
+        def _subscribe() -> None:
+            if not self._ib or not self._connected:
+                return
+            if req.vt_symbol in self._subscribed:
+                return
+            contract = self._contract_from_symbol(req.symbol, req.exchange)
+            self._subscribed[req.vt_symbol] = contract
+            self._ib.reqMktData(contract)
+
+        self._call_soon(_subscribe)
+
+    def send_order(
+        self,
+        req: OrderRequest,
+        stop_price: Optional[float] = None,
+        limit_price: Optional[float] = None,
+    ) -> str:
+        if not self._loop or not self._ib:
+            self.gateway.write_log("IB not connected")
+            return ""
+
+        fut = asyncio.run_coroutine_threadsafe(
+            self._send_order_async(req, stop_price, limit_price),
+            self._loop,
+        )
+        try:
+            orderid = fut.result(timeout=5)
+        except Exception as exc:
+            self.gateway.write_log(f"IB send order failed: {exc}")
+            return ""
+
+        order = req.create_order_data(str(orderid), self.gateway_name)
+        order.status = Status.SUBMITTING
+        self.gateway.on_order(order)
+        return order.vt_orderid
+
+    def cancel_order(self, req: CancelRequest) -> None:
+        if not self._loop:
+            return
+
+        def _cancel() -> None:
+            if not self._ib:
+                return
+            try:
+                self._ib.client.cancelOrder(int(req.orderid))
+            except Exception as exc:
+                self.gateway.write_log(f"IB cancel order failed: {exc}")
+
+        self._call_soon(_cancel)
 
     def request_contract_details(
         self,
@@ -19,102 +204,351 @@ class JanusIbApi(IbApi):
         currency: str = "USD",
         sec_type: str = "STK",
         timeout: float = 5.0,
-    ) -> List[ContractDetails]:
-        if not self.status:
+    ) -> list[Any]:
+        if not self._loop or not self._ib:
             return []
 
-        ib_contract = Contract()
-        ib_contract.symbol = symbol
-        ib_contract.exchange = exchange
-        ib_contract.currency = currency
-        ib_contract.secType = sec_type
+        async def _req() -> list[Any]:
+            if not self._ib:
+                return []
+            contract = Contract()
+            contract.symbol = symbol
+            contract.exchange = exchange
+            contract.currency = currency
+            contract.secType = sec_type
+            return await self._ib.reqContractDetailsAsync(contract)
 
-        with self._harmony_lock:
-            self.reqid += 1
-            reqid = self.reqid
-            event = Event()
-            self._harmony_events[reqid] = event
-            self._harmony_results[reqid] = []
+        fut = asyncio.run_coroutine_threadsafe(_req(), self._loop)
+        try:
+            return fut.result(timeout=timeout)
+        except Exception as exc:
+            self.gateway.write_log(f"IB contract details failed: {exc}")
+            return []
 
-        self.client.reqContractDetails(reqid, ib_contract)
-        event.wait(timeout)
+    def _run_loop(self) -> None:
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
 
-        with self._harmony_lock:
-            results = self._harmony_results.pop(reqid, [])
-            self._harmony_events.pop(reqid, None)
+        self._ib = IB()
+        self._register_handlers()
+        self._loop_ready.set()
 
-        return results
+        self._loop.run_forever()
 
-    def contractDetails(self, reqId: int, contractDetails: ContractDetails) -> None:
-        if reqId in self._harmony_results:
-            self._harmony_results[reqId].append(contractDetails)
-        super().contractDetails(reqId, contractDetails)
+    def _register_handlers(self) -> None:
+        assert self._ib
+        self._ib.connectedEvent += self._on_connected
+        self._ib.disconnectedEvent += self._on_disconnected
+        self._ib.openOrderEvent += self._on_order
+        self._ib.orderStatusEvent += self._on_order
+        self._ib.execDetailsEvent += self._on_trade
+        self._ib.updatePortfolioEvent += self._on_portfolio
+        self._ib.accountValueEvent += self._on_account_value
+        self._ib.accountSummaryEvent += self._on_account_summary
+        self._ib.pendingTickersEvent += self._on_tickers
+        self._ib.errorEvent += self._on_error
 
-    def contractDetailsEnd(self, reqId: int) -> None:
-        event = self._harmony_events.get(reqId)
-        if event:
-            event.set()
-        super().contractDetailsEnd(reqId)
+    def _call_soon(self, func, *args) -> None:
+        if self._loop:
+            self._loop.call_soon_threadsafe(func, *args)
 
-    def updatePortfolio(
+    def _ensure_connect(self) -> None:
+        if not self._ib or not self._loop:
+            return
+        if self._connecting:
+            return
+        if self._ib.client.isConnected():
+            return
+
+        self._connecting = True
+
+        async def _connect() -> None:
+            try:
+                await self._ib.connectAsync(
+                    host=self.host,
+                    port=self.port,
+                    clientId=self.client_id,
+                    account=self.account,
+                    fetchFields=(
+                        StartupFetch.POSITIONS
+                        | StartupFetch.ORDERS_OPEN
+                        | StartupFetch.ACCOUNT_UPDATES
+                        | StartupFetch.SUB_ACCOUNT_UPDATES
+                    ),
+                )
+            except Exception as exc:
+                self.gateway.write_log(f"IB connect failed: {exc}")
+            finally:
+                self._connecting = False
+
+        asyncio.create_task(_connect())
+
+    async def _send_order_async(
         self,
-        contract,
-        position,
-        marketPrice,
-        marketValue,
-        averageCost,
-        unrealizedPNL,
-        realizedPNL,
-        accountName,
-    ) -> None:
+        req: OrderRequest,
+        stop_price: Optional[float],
+        limit_price: Optional[float],
+    ) -> int:
+        assert self._ib
+
+        contract = self._contract_from_symbol(req.symbol, req.exchange)
+        action = DIRECTION_VT2IB.get(req.direction, "BUY")
+        stop_price = float(stop_price) if stop_price is not None else None
+        limit_price = float(limit_price) if limit_price is not None else None
+        volume = float(req.volume)
+        price = float(req.price)
+
+        if req.type == OrderType.MARKET:
+            order = MarketOrder(action, volume)
+        elif req.type == OrderType.LIMIT:
+            order = LimitOrder(action, volume, price)
+        elif req.type == OrderType.STOP and limit_price is not None:
+            stop = stop_price if stop_price is not None else price
+            order = StopLimitOrder(action, volume, limit_price, stop)
+        elif req.type == OrderType.STOP:
+            stop = stop_price if stop_price is not None else price
+            order = StopOrder(action, volume, stop)
+        else:
+            raise ValueError(f"Unsupported IB order type: {req.type}")
+
+        order.tif = "GTC"
+        if self.account:
+            order.account = self.account
+
+        trade = self._ib.placeOrder(contract, order)
+        return trade.order.orderId
+
+    def _on_connected(self) -> None:
+        self._connected = True
+        self.gateway.write_log("IB connected")
+        if self._ib:
+            for contract in self._subscribed.values():
+                self._ib.reqMktData(contract)
+            asyncio.create_task(self._ib.reqAccountSummaryAsync())
+
+    def _on_disconnected(self) -> None:
+        self._connected = False
+        self.gateway.write_log("IB disconnected")
+
+    def _on_error(self, *args) -> None:
+        try:
+            req_id, code, msg, *_rest = args
+            self.gateway.write_log(f"IB error {code} (req {req_id}): {msg}")
+        except Exception:
+            self.gateway.write_log(f"IB error: {args}")
+
+    def _on_order(self, trade) -> None:
+        order = trade.order
+        contract = trade.contract
+        status = trade.orderStatus.status
+
+        exchange = self._exchange_from_contract(contract)
+        symbol = self._symbol_from_contract(contract)
+
+        data = OrderData(
+            symbol=symbol,
+            exchange=exchange,
+            orderid=str(order.orderId),
+            direction=DIRECTION_IB2VT.get(order.action),
+            type=ORDERTYPE_IB2VT.get(order.orderType, OrderType.LIMIT),
+            volume=float(order.totalQuantity),
+            gateway_name=self.gateway_name,
+        )
+
+        if data.type == OrderType.LIMIT:
+            data.price = float(order.lmtPrice or 0)
+        elif data.type == OrderType.STOP:
+            data.price = float(order.auxPrice or 0)
+
+        data.traded = float(getattr(trade.orderStatus, "filled", 0) or 0)
+        data.status = STATUS_IB2VT.get(status, Status.SUBMITTING)
+        data.datetime = datetime.now()
+
+        self.gateway.on_order(copy(data))
+
+    def _on_trade(self, trade, fill) -> None:
+        execution = fill.execution
+        trade_id = execution.execId
+        if not trade_id or trade_id in self._seen_trades:
+            return
+        self._seen_trades.add(trade_id)
+
+        contract = trade.contract
+        exchange = self._exchange_from_contract(contract)
+        symbol = self._symbol_from_contract(contract)
+
+        data = TradeData(
+            symbol=symbol,
+            exchange=exchange,
+            orderid=str(trade.order.orderId),
+            tradeid=trade_id,
+            direction=DIRECTION_IB2VT.get(execution.side),
+            price=float(execution.price),
+            volume=float(execution.shares),
+            datetime=execution.time,
+            gateway_name=self.gateway_name,
+        )
+        self.gateway.on_trade(data)
+
+    def _on_portfolio(self, item) -> None:
+        contract = item.contract
+
         registry = getattr(self.gateway, "symbol_registry", None)
         if registry:
             try:
                 sec_type = getattr(contract, "secType", None)
-                if sec_type != "STK":
-                    self.gateway.write_log(
-                        f"IB holding skipped (non-equity): {contract.symbol} {sec_type}"
+                currency = getattr(contract, "currency", None)
+                conid = getattr(contract, "conId", None)
+                if sec_type == "STK" and currency and currency.upper() == "USD" and conid:
+                    registry.ensure_ib_symbol(
+                        symbol=contract.symbol,
+                        conid=conid,
+                        currency=currency,
                     )
-                else:
-                    conid = getattr(contract, "conId", None)
-                    if not conid:
-                        self.gateway.write_log(
-                            f"IB holding missing conId: {contract.symbol}"
-                        )
-                    else:
-                        currency = getattr(contract, "currency", None)
-                        if currency and currency.upper() != "USD":
-                            self.gateway.write_log(
-                                f"IB holding skipped (non-US): {contract.symbol} {currency}"
-                            )
-                        else:
-                            registry.ensure_ib_symbol(
-                                symbol=contract.symbol,
-                                conid=conid,
-                                currency=currency,
-                            )
             except Exception as exc:
                 self.gateway.write_log(
                     f"Symbol registry update failed for IB holding {contract.symbol}: {exc}"
                 )
 
-        super().updatePortfolio(
-            contract,
-            position,
-            marketPrice,
-            marketValue,
-            averageCost,
-            unrealizedPNL,
-            realizedPNL,
-            accountName,
+        position = float(item.position)
+        exchange = self._exchange_from_contract(contract)
+        symbol = self._symbol_from_contract(contract)
+
+        if position == 0:
+            direction = self._last_position_direction.get(symbol, Direction.LONG)
+            volume = 0.0
+        else:
+            direction = Direction.LONG if position > 0 else Direction.SHORT
+            volume = abs(position)
+            self._last_position_direction[symbol] = direction
+
+        avg_cost = float(item.averageCost or 0)
+        market_price = float(item.marketPrice or 0)
+        pnl = float(item.unrealizedPNL or 0)
+
+        pos = PositionData(
+            symbol=symbol,
+            exchange=exchange,
+            direction=direction,
+            volume=volume,
+            price=avg_cost if avg_cost else market_price,
+            pnl=pnl,
+            gateway_name=self.gateway_name,
+        )
+        self.gateway.on_position(pos)
+
+    def _on_account_value(self, value) -> None:
+        self._update_account(value.account, value.tag, value.value, value.currency)
+
+    def _on_account_summary(self, value) -> None:
+        self._update_account(value.account, value.tag, value.value, value.currency)
+
+    def _update_account(self, account: str, key: str, val: str, currency: str) -> None:
+        if not currency or key not in ACCOUNTFIELD_IB2VT:
+            return
+
+        accountid = f"{account}.{currency}"
+        account_data = self._accounts.get(accountid)
+        if not account_data:
+            account_data = AccountData(accountid=accountid, gateway_name=self.gateway_name)
+            self._accounts[accountid] = account_data
+
+        name = ACCOUNTFIELD_IB2VT[key]
+        try:
+            setattr(account_data, name, float(val))
+        except ValueError:
+            return
+
+        if hasattr(account_data, "balance") and hasattr(account_data, "frozen"):
+            try:
+                account_data.available = account_data.balance - account_data.frozen
+            except Exception:
+                pass
+
+        self.gateway.on_account(copy(account_data))
+
+    def _on_tickers(self, tickers: set[Ticker]) -> None:
+        for ticker in tickers:
+            tick = self._ticker_to_tickdata(ticker)
+            if tick:
+                self.gateway.on_tick(tick)
+
+    def _ticker_to_tickdata(self, ticker: Ticker) -> Optional[TickData]:
+        contract = ticker.contract
+        if not contract:
+            return None
+
+        exchange = self._exchange_from_contract(contract)
+        symbol = self._symbol_from_contract(contract)
+        dt = ticker.time or ticker.lastTimestamp or datetime.now()
+
+        tick = TickData(
+            symbol=symbol,
+            exchange=exchange,
+            datetime=dt,
+            gateway_name=self.gateway_name,
         )
 
+        def _val(value: float) -> float:
+            return 0.0 if value is None or isNan(value) else float(value)
 
-class JanusIbGateway(IbGateway):
+        tick.last_price = _val(ticker.last)
+        tick.last_volume = _val(ticker.lastSize)
+        tick.volume = _val(ticker.volume)
+        tick.open_price = _val(ticker.open)
+        tick.high_price = _val(ticker.high)
+        tick.low_price = _val(ticker.low)
+        tick.pre_close = _val(ticker.close)
+        tick.bid_price_1 = _val(ticker.bid)
+        tick.ask_price_1 = _val(ticker.ask)
+        tick.bid_volume_1 = _val(ticker.bidSize)
+        tick.ask_volume_1 = _val(ticker.askSize)
+        tick.localtime = datetime.now()
+
+        return tick
+
+    def _exchange_from_contract(self, contract: Contract) -> Exchange:
+        if contract.exchange:
+            exchange = EXCHANGE_IB2VT.get(contract.exchange)
+        elif contract.primaryExchange:
+            exchange = EXCHANGE_IB2VT.get(contract.primaryExchange)
+        else:
+            exchange = None
+        return exchange or Exchange.SMART
+
+    def _symbol_from_contract(self, contract: Contract) -> str:
+        registry = getattr(self.gateway, "symbol_registry", None)
+        conid = getattr(contract, "conId", None)
+        if registry and conid:
+            record = registry.get_by_ib_conid(conid)
+            if record:
+                return record.canonical_symbol
+        symbol = getattr(contract, "symbol", "") or ""
+        if symbol:
+            return symbol
+        if conid:
+            return str(conid)
+        return ""
+
+    def _contract_from_symbol(self, symbol: str, exchange: Exchange) -> Contract:
+        if symbol.isdigit():
+            contract = Contract()
+            contract.conId = int(symbol)
+            contract.secType = "STK"
+            contract.exchange = "SMART"
+            contract.currency = "USD"
+            return contract
+
+        ib_exchange = EXCHANGE_VT2IB.get(exchange, "SMART")
+        return Stock(symbol.upper(), ib_exchange, "USD")
+
+
+class JanusIbGateway(BaseGateway):
     def __init__(self, event_engine, gateway_name: str) -> None:
         super().__init__(event_engine, gateway_name)
-        self.api = JanusIbApi(self)
+        self.api = IbAsyncApi(self)
         self.symbol_registry = None
+        self._timer_count = 0
 
     def connect(self, setting: dict) -> None:
         self.symbol_registry = setting.get("symbol_registry")
@@ -127,13 +561,45 @@ class JanusIbGateway(IbGateway):
         if host is None or port is None or client_id is None:
             raise ValueError("Missing IB connection settings (host/port/client_id)")
 
-        mapped = {
-            "TWS地址": host,
-            "TWS端口": port,
-            "客户号": client_id,
-            "交易账户": account,
-        }
-        super().connect(mapped)
+        self.api.connect(host, port, client_id, account)
+        self.event_engine.register(EVENT_TIMER, self.process_timer_event)
+
+    def close(self) -> None:
+        self.api.close()
+
+    def subscribe(self, req: SubscribeRequest) -> None:
+        self.api.subscribe(req)
+
+    def send_order(self, req: OrderRequest | dict) -> str:
+        stop_price = None
+        limit_price = None
+        if isinstance(req, dict):
+            stop_price = req.pop("stop_price", None)
+            limit_price = req.pop("limit_price", None)
+            req = OrderRequest(**req)
+        else:
+            stop_price = getattr(req, "stop_price", None)
+            limit_price = getattr(req, "limit_price", None)
+        return self.api.send_order(req, stop_price=stop_price, limit_price=limit_price)
+
+    def cancel_order(self, req: CancelRequest) -> None:
+        self.api.cancel_order(req)
+
+    def query_account(self) -> None:
+        pass
+
+    def query_position(self) -> None:
+        pass
+
+    def request_contract_details(self, *args, **kwargs):
+        return self.api.request_contract_details(*args, **kwargs)
+
+    def process_timer_event(self, event: Event) -> None:
+        self._timer_count += 1
+        if self._timer_count < 10:
+            return
+        self._timer_count = 0
+        self.api.check_connection()
 
     def _apply_canonical_symbol(self, symbol: str) -> Optional[str]:
         registry = self.symbol_registry
@@ -152,14 +618,14 @@ class JanusIbGateway(IbGateway):
             return record.canonical_symbol
         return None
 
-    def on_order(self, order) -> None:
+    def on_order(self, order: OrderData) -> None:
         canonical = self._apply_canonical_symbol(order.symbol)
         if canonical:
             order.symbol = canonical
             order.vt_symbol = f"{order.symbol}.{order.exchange.value}"
         super().on_order(order)
 
-    def on_position(self, position) -> None:
+    def on_position(self, position: PositionData) -> None:
         canonical = self._apply_canonical_symbol(position.symbol)
         if canonical:
             position.symbol = canonical

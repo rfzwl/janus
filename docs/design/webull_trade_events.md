@@ -97,7 +97,7 @@ Webull gRPC -> EventsClient -> TradeEventsManager -> Webull gateway (account ali
 **Scope limitation**
 - This interface only supports order status change push (no direct position updates).
 
-## Local State Strategy (Borrowed from vnpy_ib)
+## Local State Strategy (Borrowed from legacy IB gateway patterns)
 - Maintain a local order cache and only update delta fields on events.
 - If event lacks full fields, fall back to cache (same pattern as IB `orderStatus` + `openOrder`).
 - Emit a copy via `on_order(copy(order))` to avoid mutating objects after dispatch.
@@ -151,4 +151,4 @@ Webull gRPC -> EventsClient -> TradeEventsManager -> Webull gateway (account ali
 - ../vnpy_all/vnpy/vnpy/trader/gateway.py
 - ../vnpy_all/vnpy/vnpy/event/engine.py
 - ../vnpy_all/vnpy/vnpy/trader/engine.py
-- ../vnpy_all/vnpy_ib/vnpy_ib/ib_gateway.py
+- ../vnpy_all/vnpy_ib/vnpy_ib/ib_gateway.py (legacy pattern reference)
