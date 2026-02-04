@@ -1,9 +1,15 @@
+import os
 import sys
+import tempfile
 from pathlib import Path
 import unittest
 from types import SimpleNamespace
 
 sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
+
+_HOME_DIR = tempfile.TemporaryDirectory()
+os.environ["HOME"] = _HOME_DIR.name
+os.makedirs(os.path.join(_HOME_DIR.name, ".vntrader", "log"), exist_ok=True)
 
 from janus.server import JanusServer
 from janus.symbol_registry import SymbolRecord

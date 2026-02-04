@@ -50,7 +50,7 @@ class JanusServer:
         self.rpc_engine.server.register(self.remote_exit)
         self.rpc_engine.server.register(self.sync_all)
         self.rpc_engine.server.register(self.sync_gateway)
-        self.rpc_engine.server.register(self.send_order_intent)
+        self.rpc_engine.server.register(self.send_order)
         self.rpc_engine.server.register(self.harmony)
 
     def _init_symbol_registry(self) -> SymbolRegistry:
@@ -70,7 +70,7 @@ class JanusServer:
                 mapping[name] = broker
         return mapping
 
-    def send_order_intent(self, req: dict, gateway_name: str) -> str:
+    def send_order(self, req: dict, gateway_name: str) -> str:
         if not isinstance(req, dict):
             raise ValueError("Order intent must be a dict")
 
