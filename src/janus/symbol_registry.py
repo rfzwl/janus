@@ -1,4 +1,5 @@
 import logging
+from threading import RLock
 from dataclasses import dataclass
 from typing import Dict, Optional, Any
 
@@ -20,6 +21,7 @@ class SymbolRegistry:
         self.logger = logger or logging.getLogger("SymbolRegistry")
         self._settings = settings
         self._conn = self._connect(settings)
+        self._lock = RLock()
         self._cache_by_canonical: Dict[str, SymbolRecord] = {}
         self._cache_by_webull: Dict[str, SymbolRecord] = {}
         self._cache_by_ib_conid: Dict[int, SymbolRecord] = {}
@@ -74,6 +76,10 @@ class SymbolRegistry:
     def get_by_ib_conid(self, conid: int) -> Optional[SymbolRecord]:
         return self._cache_by_ib_conid.get(conid)
 
+    def list_records(self) -> list[SymbolRecord]:
+        with self._lock:
+            return list(self._cache_by_canonical.values())
+
     def ensure_webull_symbol(
         self,
         ticker: str,
@@ -81,36 +87,37 @@ class SymbolRegistry:
         currency: Optional[str] = None,
         description: Optional[str] = None,
     ) -> SymbolRecord:
-        canonical = self.normalize(ticker)
-        record = self._cache_by_canonical.get(canonical)
+        with self._lock:
+            canonical = self.normalize(ticker)
+            record = self._cache_by_canonical.get(canonical)
 
-        if record is None:
-            record = self._insert_webull_symbol(
-                canonical,
-                asset_class or "EQUITY",
-                currency or "USD",
-                description,
-            )
+            if record is None:
+                record = self._insert_webull_symbol(
+                    canonical,
+                    asset_class or "EQUITY",
+                    currency or "USD",
+                    description,
+                )
+                return record
+
+            if record.webull_ticker and record.webull_ticker != canonical:
+                self.logger.warning(
+                    "Webull ticker mismatch for %s: registry has %s", canonical, record.webull_ticker
+                )
+                return record
+
+            # Fill missing webull_ticker if absent
+            if not record.webull_ticker:
+                self._update_webull_ticker(canonical, canonical)
+                record.webull_ticker = canonical
+                self._cache_by_webull[canonical] = record
+
+            # Fill description only if empty (first value wins)
+            if description and not record.description:
+                self._update_description(canonical, description)
+                record.description = description
+
             return record
-
-        if record.webull_ticker and record.webull_ticker != canonical:
-            self.logger.warning(
-                "Webull ticker mismatch for %s: registry has %s", canonical, record.webull_ticker
-            )
-            return record
-
-        # Fill missing webull_ticker if absent
-        if not record.webull_ticker:
-            self._update_webull_ticker(canonical, canonical)
-            record.webull_ticker = canonical
-            self._cache_by_webull[canonical] = record
-
-        # Fill description only if empty (first value wins)
-        if description and not record.description:
-            self._update_description(canonical, description)
-            record.description = description
-
-        return record
 
     def ensure_ib_symbol(
         self,
@@ -120,47 +127,48 @@ class SymbolRegistry:
         currency: Optional[str] = None,
         description: Optional[str] = None,
     ) -> SymbolRecord:
-        canonical = self.normalize(symbol)
+        with self._lock:
+            canonical = self.normalize(symbol)
 
-        existing_by_conid = self._cache_by_ib_conid.get(conid)
-        if existing_by_conid and existing_by_conid.canonical_symbol != canonical:
-            self.logger.warning(
-                "IB conId %s already mapped to %s; skip %s",
-                conid,
-                existing_by_conid.canonical_symbol,
-                canonical,
-            )
-            return existing_by_conid
+            existing_by_conid = self._cache_by_ib_conid.get(conid)
+            if existing_by_conid and existing_by_conid.canonical_symbol != canonical:
+                self.logger.warning(
+                    "IB conId %s already mapped to %s; skip %s",
+                    conid,
+                    existing_by_conid.canonical_symbol,
+                    canonical,
+                )
+                return existing_by_conid
 
-        record = self._cache_by_canonical.get(canonical)
-        if record is None:
-            record = self._insert_ib_symbol(
-                canonical,
-                asset_class or "EQUITY",
-                currency or "USD",
-                conid,
-                description,
-            )
+            record = self._cache_by_canonical.get(canonical)
+            if record is None:
+                record = self._insert_ib_symbol(
+                    canonical,
+                    asset_class or "EQUITY",
+                    currency or "USD",
+                    conid,
+                    description,
+                )
+                return record
+
+            if record.ib_conid and record.ib_conid != conid:
+                self.logger.warning(
+                    "IB conId mismatch for %s: registry has %s",
+                    canonical,
+                    record.ib_conid,
+                )
+                return record
+
+            if not record.ib_conid:
+                self._update_ib_conid(canonical, conid)
+                record.ib_conid = conid
+                self._cache_by_ib_conid[conid] = record
+
+            if description and not record.description:
+                self._update_description(canonical, description)
+                record.description = description
+
             return record
-
-        if record.ib_conid and record.ib_conid != conid:
-            self.logger.warning(
-                "IB conId mismatch for %s: registry has %s",
-                canonical,
-                record.ib_conid,
-            )
-            return record
-
-        if not record.ib_conid:
-            self._update_ib_conid(canonical, conid)
-            record.ib_conid = conid
-            self._cache_by_ib_conid[conid] = record
-
-        if description and not record.description:
-            self._update_description(canonical, description)
-            record.description = description
-
-        return record
 
     def _insert_webull_symbol(
         self,

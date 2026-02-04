@@ -51,6 +51,7 @@ class JanusServer:
         self.rpc_engine.server.register(self.sync_all)
         self.rpc_engine.server.register(self.sync_gateway)
         self.rpc_engine.server.register(self.send_order_intent)
+        self.rpc_engine.server.register(self.harmony)
 
     def _init_symbol_registry(self) -> SymbolRegistry:
         try:
@@ -111,6 +112,107 @@ class JanusServer:
         self._sync_gateway(gateway)
         return f"Sync request sent to {gateway_name}."
 
+    def harmony(self):
+        """Fill missing symbol registry fields for connected brokers."""
+        connected = self._connected_brokers()
+        if not connected:
+            return "Harmony skipped: no connected brokers."
+
+        summary_lines = []
+        errors = []
+
+        if "webull" in connected:
+            updated = []
+            skipped = []
+            for record in self.symbol_registry.list_records():
+                if record.webull_ticker:
+                    continue
+                try:
+                    self.symbol_registry.ensure_webull_symbol(record.canonical_symbol)
+                    updated.append(record.canonical_symbol)
+                except Exception as exc:
+                    errors.append(f"Webull update failed for {record.canonical_symbol}: {exc}")
+                    break
+            summary_lines.append(
+                f"Webull updated: {len(updated)}; skipped: {len(skipped)}"
+            )
+            if updated:
+                summary_lines.append(f"  Webull updated symbols: {', '.join(updated)}")
+
+        if "ib" in connected and not errors:
+            gateway = self._get_gateway_for_broker("ib")
+            if not gateway:
+                summary_lines.append("IB skipped: no connected IB gateway.")
+            else:
+                api = getattr(gateway, "api", None)
+                updated = []
+                skipped = []
+                missing = []
+
+                if not api or not getattr(api, "status", False):
+                    summary_lines.append("IB skipped: gateway not connected.")
+                else:
+                    for record in self.symbol_registry.list_records():
+                        if record.ib_conid:
+                            continue
+                        if record.asset_class != "EQUITY":
+                            skipped.append(f"{record.canonical_symbol} (non-equity)")
+                            continue
+                        currency = (record.currency or "USD").upper()
+                        if currency != "USD":
+                            skipped.append(f"{record.canonical_symbol} (non-US {currency})")
+                            continue
+                        try:
+                            results = api.request_contract_details(
+                                symbol=record.canonical_symbol,
+                                exchange="SMART",
+                                currency="USD",
+                                sec_type="STK",
+                            )
+                        except Exception as exc:
+                            errors.append(f"IB lookup failed for {record.canonical_symbol}: {exc}")
+                            break
+
+                        if len(results) == 1:
+                            detail = results[0]
+                            conid = getattr(detail.contract, "conId", None)
+                            sec_type = getattr(detail.contract, "secType", None)
+                            if not conid or sec_type != "STK":
+                                skipped.append(f"{record.canonical_symbol} (invalid contract)")
+                                continue
+                            try:
+                                self.symbol_registry.ensure_ib_symbol(
+                                    symbol=record.canonical_symbol,
+                                    conid=conid,
+                                    currency="USD",
+                                    description=getattr(detail, "longName", None),
+                                )
+                            except Exception as exc:
+                                errors.append(
+                                    f"IB update failed for {record.canonical_symbol}: {exc}"
+                                )
+                                break
+                            updated.append(record.canonical_symbol)
+                        elif len(results) == 0:
+                            missing.append(record.canonical_symbol)
+                        else:
+                            skipped.append(f"{record.canonical_symbol} (ambiguous)")
+
+                    summary_lines.append(
+                        f"IB updated: {len(updated)}; missing: {len(missing)}; skipped: {len(skipped)}"
+                    )
+                    if updated:
+                        summary_lines.append(f"  IB updated symbols: {', '.join(updated)}")
+                    if missing:
+                        summary_lines.append(f"  IB missing symbols: {', '.join(missing)}")
+                    if skipped:
+                        summary_lines.append(f"  IB skipped symbols: {', '.join(skipped)}")
+
+        if errors:
+            raise RuntimeError("Harmony failed: " + "; ".join(errors))
+
+        return "\n".join(summary_lines) if summary_lines else "Harmony completed."
+
     @staticmethod
     def _sync_gateway(gateway):
         if hasattr(gateway, "query_account"):
@@ -119,6 +221,20 @@ class JanusServer:
             gateway.query_position()
         if hasattr(gateway, "query_open_orders"):
             gateway.query_open_orders()
+
+    def _connected_brokers(self) -> set[str]:
+        brokers = set()
+        for gateway_name in self.main_engine.gateways.keys():
+            broker = self.account_broker.get(gateway_name)
+            if broker:
+                brokers.add(broker)
+        return brokers
+
+    def _get_gateway_for_broker(self, broker: str):
+        for gateway_name in self.main_engine.gateways.keys():
+            if self.account_broker.get(gateway_name) == broker:
+                return self.main_engine.get_gateway(gateway_name)
+        return None
 
     def _sanitize_log_event(self, event) -> None:
         """

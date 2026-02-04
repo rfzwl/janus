@@ -47,6 +47,15 @@ Notes:
   3) If multiple matches remain, do not write; require manual mapping.
  - Auto-fill can be triggered by holdings load or by the client `harmony` command.
 
+## Harmony Command (MVP)
+- Server-only RPC; client triggers and receives a summary.
+- Operates on **connected broker types only** (one IB gateway covers all IB accounts).
+- Fills **missing fields only** (no re-validation of existing mappings).
+- IB lookup uses US + SMART; multiple matches -> warn + skip.
+- Webull uses ticker only; no region/market reconciliation.
+- On DB write failure: abort the run and return error (no partial results reported).
+- On-demand only (no scheduler); no rate limiting in MVP.
+
 ## Operational Rules (MVP)
 - Canonical normalization: trim + uppercase before lookup and store.
 - Webull holdings auto-insert: if only ticker is present, create row with canonical_symbol=ticker.

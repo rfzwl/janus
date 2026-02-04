@@ -88,6 +88,8 @@ class JanusRpcClient(RpcClient):
                 log_func("Subscribed to all events.")
             case "sync":
                 self.request_sync(log_func=log_func)
+            case "harmony":
+                self.request_harmony(log_func=log_func)
             case _:
                 log_func(f"Unknown command: {parts[0]}")
 
@@ -142,6 +144,7 @@ class JanusRpcClient(RpcClient):
             "  cancel <vt_orderid>",
             "  connect                 Subscribe to all events",
             "  sync                    Sync account, positions, and open orders",
+            "  harmony                 Fill missing symbol mappings (server-side)",
             "  help [command]",
             "  exit|quit",
             "",
@@ -167,6 +170,7 @@ class JanusRpcClient(RpcClient):
             "cancel": "Usage: cancel <vt_orderid>",
             "connect": "Usage: connect  (subscribe to all events)",
             "sync": "Usage: sync  (sync current account)",
+            "harmony": "Usage: harmony  (fill missing symbol mappings)",
             "help": "Usage: help [command]",
             "exit": "Usage: exit  (stop remote server and quit)",
             "quit": "Usage: quit  (quit client)",
@@ -240,6 +244,21 @@ class JanusRpcClient(RpcClient):
             self._refresh_snapshot(target_account, logger)
         except Exception as e:
             logger(f"Sync failed: {e}")
+
+    def request_harmony(self, log_func: Optional[Callable[[str], None]] = None):
+        logger = log_func or self.log_callback or print
+        if not hasattr(self, "_socket_req"):
+            return
+        remote = getattr(self, "harmony", None)
+        if not remote:
+            logger("Harmony not available on server.")
+            return
+        try:
+            res = remote()
+            if res is not None:
+                logger(str(res))
+        except Exception as e:
+            logger(f"Harmony failed: {e}")
 
     def _refresh_snapshot(self, account: str, logger: Callable[[str], None]):
         try:

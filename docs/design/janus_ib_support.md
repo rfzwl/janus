@@ -129,6 +129,13 @@ Fields:
 ## Harmony Command
 - Add client command `harmony` to request server-side symbol/id fill across all connected brokers.
 - Server should only write registry entries when lookup result is unique after default market filter.
+- Harmony scope:
+  - server-only RPC, client receives final summary
+  - connected broker types only (per broker type, not per account)
+  - fill missing fields only; no re-validate/overwrite
+  - Webull uses ticker only; no region/market reconciliation
+  - abort on DB write error (return failure)
+  - on-demand only; no rate limiting in MVP
 
 ## Phased Implementation Plan
 1) Registry + Postgres (no trading changes)
