@@ -73,7 +73,7 @@ Janus provides a flexible command system for managing multiple accounts from a s
 ### IB + Webull in one environment
 
 The official IB API requires protobuf 5.x, while the Webull SDK pins protobuf 4.21.12. To run
-both in the same environment, install Webull with `--no-deps` and avoid `uv` syncing.
+both in the same environment, install vnpy_ib and Webull with `--no-deps` and avoid `uv` syncing.
 
 Bootstrap helper:
 
