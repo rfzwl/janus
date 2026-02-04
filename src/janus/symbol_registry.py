@@ -73,6 +73,10 @@ class SymbolRegistry:
         canonical = self.normalize(symbol)
         return self._cache_by_canonical.get(canonical)
 
+    def get_by_webull_ticker(self, ticker: str) -> Optional[SymbolRecord]:
+        canonical = self.normalize(ticker)
+        return self._cache_by_webull.get(canonical)
+
     def get_by_ib_conid(self, conid: int) -> Optional[SymbolRecord]:
         return self._cache_by_ib_conid.get(conid)
 

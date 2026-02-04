@@ -78,6 +78,14 @@ class SymbolRegistryTests(unittest.TestCase):
         self.assertEqual(record.ib_conid, 202)
         self.assertIs(registry.get_by_ib_conid(202), record)
 
+    def test_get_by_webull_ticker(self):
+        rows = [("AAPL", "EQUITY", "USD", None, "WB", "Apple Inc.")]
+        registry, _ = self._make_registry(rows=rows)
+
+        record = registry.get_by_webull_ticker("wb")
+        self.assertIsNotNone(record)
+        self.assertEqual(record.canonical_symbol, "AAPL")
+
 
 if __name__ == "__main__":
     unittest.main()

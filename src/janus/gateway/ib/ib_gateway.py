@@ -134,3 +134,37 @@ class JanusIbGateway(IbGateway):
             "交易账户": account,
         }
         super().connect(mapped)
+
+    def _apply_canonical_symbol(self, symbol: str) -> Optional[str]:
+        registry = self.symbol_registry
+        if not registry or not symbol:
+            return None
+        record = None
+        try:
+            conid = int(symbol)
+        except (TypeError, ValueError):
+            conid = None
+        if conid is not None:
+            record = registry.get_by_ib_conid(conid)
+        if not record:
+            record = registry.get_by_canonical(symbol)
+        if record and record.canonical_symbol != symbol:
+            return record.canonical_symbol
+        return None
+
+    def on_order(self, order) -> None:
+        canonical = self._apply_canonical_symbol(order.symbol)
+        if canonical:
+            order.symbol = canonical
+            order.vt_symbol = f"{order.symbol}.{order.exchange.value}"
+        super().on_order(order)
+
+    def on_position(self, position) -> None:
+        canonical = self._apply_canonical_symbol(position.symbol)
+        if canonical:
+            position.symbol = canonical
+            position.vt_symbol = f"{position.symbol}.{position.exchange.value}"
+            position.vt_positionid = (
+                f"{position.gateway_name}.{position.vt_symbol}.{position.direction.value}"
+            )
+        super().on_position(position)

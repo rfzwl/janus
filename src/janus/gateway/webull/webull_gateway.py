@@ -119,13 +119,38 @@ class WebullOfficialGateway(BaseGateway):
             # 4. 初始化查询 (资金、持仓)
             self.query_account()
             self.query_position()
-
             # 5. 轮询已取消，后续由客户端主动同步触发
 
         except Exception as e:
             self.on_log(f"连接异常: {e}")
             import traceback
             traceback.print_exc()
+
+    def _apply_canonical_symbol(self, symbol: str) -> Optional[str]:
+        registry = self.symbol_registry
+        if not registry or not symbol:
+            return None
+        record = registry.get_by_webull_ticker(symbol)
+        if record and record.canonical_symbol != symbol:
+            return record.canonical_symbol
+        return None
+
+    def on_order(self, order: OrderData) -> None:
+        canonical = self._apply_canonical_symbol(order.symbol)
+        if canonical:
+            order.symbol = canonical
+            order.vt_symbol = f"{order.symbol}.{order.exchange.value}"
+        super().on_order(order)
+
+    def on_position(self, position: PositionData) -> None:
+        canonical = self._apply_canonical_symbol(position.symbol)
+        if canonical:
+            position.symbol = canonical
+            position.vt_symbol = f"{position.symbol}.{position.exchange.value}"
+            position.vt_positionid = (
+                f"{position.gateway_name}.{position.vt_symbol}.{position.direction.value}"
+            )
+        super().on_position(position)
     
     def send_order(self, req: OrderRequest) -> str:
         """
