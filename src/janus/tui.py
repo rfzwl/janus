@@ -23,9 +23,10 @@ class JanusTUI:
         self.history = FileHistory(history_path)
 
         # Input Buffer
+        self._prompt_provider = lambda: self._prompt_for(self.rpc_client.default_account)
         self.input_field = TextArea(
             height=Dimension(min=1, preferred=3, max=3),
-            prompt=self._prompt_for(self.rpc_client.default_account),
+            prompt=self._prompt_provider,
             style='class:input-field',
             multiline=False,
             accept_handler=self.handle_command,
@@ -101,7 +102,7 @@ class JanusTUI:
 
     def update_prompt(self, account_name: str):
         """Update the input prompt to reflect current account."""
-        self.input_field.prompt = self._prompt_for(account_name)
+        self.input_field.prompt = self._prompt_provider
         self.status_frame.title = self._orders_title_for(account_name)
         self.positions_frame.title = self._positions_title_for(account_name)
         if self.app.is_running:
