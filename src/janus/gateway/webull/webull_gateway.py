@@ -1,6 +1,9 @@
 import logging
 import uuid
+from copy import copy
 from typing import Any, Dict, Optional
+
+from threading import Lock, Timer
 
 # Webull SDK
 from webull.core.client import ApiClient
@@ -49,6 +52,10 @@ class WebullOfficialGateway(BaseGateway):
         
         self._last_position_directions: Dict[str, Direction] = {}
         self._known_orders: Dict[str, OrderData] = {}
+        self._client_order_id_map: Dict[str, str] = {}
+        self._refresh_lock = Lock()
+        self._refresh_timer: Optional[Timer] = None
+        self._trade_events_debounce = 1.0
 
     def connect(self, setting: Dict[str, Any]):
         """
@@ -182,8 +189,9 @@ class WebullOfficialGateway(BaseGateway):
         elif req.type == OrderType.STOP:
             wb_order_type = "STOP_LOSS_LIMIT" if limit_price is not None else "STOP_LOSS"
 
+        client_order_id = uuid.uuid4().hex
         params = {
-            "client_order_id": uuid.uuid4().hex,
+            "client_order_id": client_order_id,
             "combo_type": "NORMAL",
             "symbol": req.symbol.upper(),
             "instrument_type": "EQUITY",
@@ -243,6 +251,7 @@ class WebullOfficialGateway(BaseGateway):
                 order.status = Status.NOTTRADED
                 self.on_order(order)
                 self._known_orders[order.orderid] = order
+                self._client_order_id_map[client_order_id] = order.orderid
 
                 return order.vt_orderid
             else:
@@ -555,6 +564,163 @@ class WebullOfficialGateway(BaseGateway):
                     order.status = Status.ALLTRADED
                     order.traded = order.volume
                     self.on_order(order)
+        except Exception:
+            pass
+
+    def set_trade_events_debounce(self, seconds: float) -> None:
+        if seconds and seconds > 0:
+            self._trade_events_debounce = float(seconds)
+
+    def handle_trade_event(self, event_type, subscribe_type, payload, response) -> None:
+        if not isinstance(payload, dict):
+            return
+
+        data = payload
+        if isinstance(payload.get("data"), dict):
+            data = payload.get("data") or payload
+
+        account_id = self._pick_value(data, "account_id", "accountId", "secAccountId")
+        if account_id and self.account_id and str(account_id) != str(self.account_id):
+            return
+
+        client_order_id = self._pick_value(data, "client_order_id", "clientOrderId")
+        order_id = self._pick_value(data, "order_id", "orderId")
+        if not order_id and client_order_id:
+            order_id = self._client_order_id_map.get(str(client_order_id))
+        if not order_id and client_order_id:
+            order_id = client_order_id
+        if not order_id:
+            return
+        if client_order_id:
+            self._client_order_id_map[str(client_order_id)] = str(order_id)
+
+        symbol = data.get("symbol") or ""
+        if not symbol:
+            ticker = data.get("ticker")
+            if isinstance(ticker, dict):
+                symbol = ticker.get("symbol") or ""
+
+        side = self._pick_value(data, "side", "action", "orderAction", "order_action")
+        direction = None
+        if isinstance(side, str):
+            side = side.upper()
+            if side in ("BUY", "BUY_OPEN", "BUY_TO_COVER"):
+                direction = Direction.LONG
+            elif side in ("SELL", "SELL_SHORT", "SELL_TO_OPEN"):
+                direction = Direction.SHORT
+
+        total = self._safe_float(self._pick_value(
+            data, "total_quantity", "quantity", "qty", "totalQuantity"
+        )) or 0
+
+        traded = self._safe_float(self._pick_value(
+            data, "filled_quantity", "filled_qty", "filledQuantity"
+        )) or 0
+
+        order_type_raw = self._pick_value(data, "order_type", "orderType")
+        order_type = OrderType.LIMIT
+        if isinstance(order_type_raw, str):
+            order_type_raw = order_type_raw.upper()
+            if order_type_raw == "MARKET":
+                order_type = OrderType.MARKET
+            elif order_type_raw in ("STOP_LOSS", "STOP_LOSS_LIMIT", "STOP"):
+                order_type = OrderType.STOP
+
+        limit_price = self._safe_float(self._pick_value(
+            data, "limit_price", "lmtPrice", "price"
+        ))
+        stop_price = self._safe_float(self._pick_value(data, "stop_price", "stopPrice"))
+
+        price = 0.0
+        if order_type == OrderType.LIMIT:
+            price = limit_price or 0.0
+        elif order_type == OrderType.STOP:
+            price = stop_price or limit_price or 0.0
+
+        status = None
+        status_raw = self._pick_value(data, "status", "order_status")
+        if isinstance(status_raw, str):
+            status_norm = status_raw.lower().replace(" ", "_")
+            if "cancel" in status_norm:
+                status = Status.CANCELLED
+            elif "reject" in status_norm or "fail" in status_norm:
+                status = Status.REJECTED
+            elif "partial" in status_norm and "fill" in status_norm:
+                status = Status.PARTTRADED
+            elif "fill" in status_norm or "execut" in status_norm or "done" in status_norm:
+                status = Status.ALLTRADED
+            elif "submit" in status_norm:
+                status = Status.NOTTRADED
+
+        scene_type = self._pick_value(data, "scene_type", "sceneType")
+        if isinstance(scene_type, str):
+            scene_type = scene_type.upper()
+            if scene_type == "FINAL_FILLED":
+                status = Status.ALLTRADED
+            elif scene_type == "FILLED":
+                status = Status.PARTTRADED
+            elif scene_type in ("PLACE_FAILED", "MODIFY_FAILED", "CANCEL_FAILED"):
+                status = Status.REJECTED
+            elif scene_type == "CANCEL_SUCCESS":
+                status = Status.CANCELLED
+
+        if status is None:
+            status = Status.NOTTRADED
+
+        if status not in (Status.CANCELLED, Status.REJECTED) and total > 0:
+            if traded >= total > 0:
+                status = Status.ALLTRADED
+            elif traded > 0:
+                status = Status.PARTTRADED
+
+        order = self._known_orders.get(str(order_id))
+        if not order:
+            order = OrderData(
+                orderid=str(order_id),
+                symbol=symbol,
+                exchange=Exchange.SMART,
+                type=order_type,
+                direction=direction,
+                price=price,
+                volume=total,
+                traded=traded,
+                status=status,
+                gateway_name=self.gateway_name
+            )
+        else:
+            if symbol:
+                order.symbol = symbol
+                order.vt_symbol = f"{order.symbol}.{order.exchange.value}"
+            if direction:
+                order.direction = direction
+            order.type = order_type
+            order.price = price
+            order.volume = total or order.volume
+            order.traded = traded or order.traded
+            order.status = status
+
+        self._known_orders[str(order_id)] = order
+        self.on_order(copy(order))
+
+        if scene_type in ("FINAL_FILLED", "FILLED", "CANCEL_SUCCESS") or status in (
+            Status.ALLTRADED,
+            Status.CANCELLED,
+        ):
+            self._schedule_refresh()
+
+    def _schedule_refresh(self) -> None:
+        with self._refresh_lock:
+            if self._refresh_timer and self._refresh_timer.is_alive():
+                return
+            self._refresh_timer = Timer(self._trade_events_debounce, self._refresh_snapshot)
+            self._refresh_timer.daemon = True
+            self._refresh_timer.start()
+
+    def _refresh_snapshot(self) -> None:
+        try:
+            self.query_open_orders()
+            self.query_position()
+            self.query_account()
         except Exception:
             pass
 

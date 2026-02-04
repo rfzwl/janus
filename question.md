@@ -1,3 +1,3 @@
-# Current Open Questions
+# Webull Trade-Events Open Questions
 
-- None right now. Add new questions here as we discover them.
+All current questions are resolved. Add new items here as they arise.

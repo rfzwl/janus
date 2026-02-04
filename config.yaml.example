@@ -7,12 +7,20 @@ accounts:
     app_key: "YOUR_APP_KEY"
     app_secret: "YOUR_APP_SECRET"
     region_id: "us"
+    trade_events:
+      enabled: true
+      host: ""                    # optional override (default from SDK)
+      debounce_seconds: 1.0
 
   - name: "webull_work"           # 另一个 Webull 账户
     broker: "webull"
     app_key: "YOUR_APP_KEY"
     app_secret: "YOUR_APP_SECRET"
     region_id: "us"
+    trade_events:
+      enabled: true
+      host: ""
+      debounce_seconds: 1.0
 
   - name: "ib_main"               # IB 账户
     broker: "ib"

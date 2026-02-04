@@ -21,28 +21,22 @@
 - Client subscribes to all events and updates TUI on `eOrder` / `ePosition`.
 
 ## Proposed Architecture
-**Recommended: shared TradeEventsManager in server**
-- Rationale: trade-events has connection limits; multiple accounts may share app key/secret.
-- Manager keyed by (app_key, app_secret, region_id, host). Account_id is membership, not a key.
-- Each Webull gateway registers its account_id and a callback with the manager.
-- Manager owns EventsClient lifecycle and calls `do_subscribe([account_ids])`.
-- EventsClient callback dispatches to the correct gateway (account alias) by account_id.
-
-**Alternative: per-gateway EventsClient**
-- Simpler wiring but risks `NumOfConnExceed` if multiple accounts share app key.
-- Use only if it is guaranteed one account per app key.
+**Selected: TradeEventsEngine (vn.py Engine)**
+- Implemented as a vn.py `BaseEngine` so lifecycle is managed by `MainEngine`.
+- Per-account subscription (assumes no shared credentials).
+- Engine owns worker threads and delegates event payloads to the gateway.
 
 ## Data Flow
 Webull gRPC -> EventsClient -> TradeEventsManager -> Webull gateway (account alias) -> EventEngine -> RpcService -> Janus client -> TUI
 
 ## TradeEventsManager Type
-- Not a vn.py built-in class. Implement as a plain helper owned by the server (or a custom Engine if you want lifecycle hooks).
-- No need to subclass BaseGateway; it only routes trade-events to gateways.
+- Implemented as a vn.py Engine (`TradeEventsEngine`), owned by MainEngine.
+- Not a BaseGateway; it only routes trade-events to Webull gateways.
 
 ## Threading & Lifecycle
-- One dedicated daemon thread per TradeEventsManager instance (per credential group).
-- Thread runs blocking `do_subscribe([account_ids])` and yields events via callback.
-- Registry is thread-safe: account_id -> gateway callback; protect with a lock.
+- One dedicated daemon thread per account (no shared credentials).
+- Thread runs blocking `do_subscribe([account_id])` and yields events via callback.
+- Engine holds worker registry; dispatch directly to gateway for that account.
 - Callback should be lightweight: parse payload, create/update OrderData, call `gateway.on_order` on the account gateway.
 - Heavy refresh work (query_position/account/open_orders) is debounced and executed asynchronously to avoid blocking.
 - Reconnect loop lives in the same thread: on SubscribeExpired/NumOfConnExceed, backoff then re-subscribe.

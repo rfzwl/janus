@@ -14,6 +14,7 @@ from .gateway.webull.webull_gateway import WebullOfficialGateway
 from .gateway.ib.ib_gateway import JanusIbGateway
 from .config import ConfigLoader
 from .symbol_registry import SymbolRegistry
+from .trade_events_engine import TradeEventsEngine
 from vnpy.trader.constant import Exchange, Direction, OrderType, Offset
 
 logging.basicConfig(level=logging.WARNING, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -29,6 +30,7 @@ class JanusServer:
         self.symbol_registry = self._init_symbol_registry()
         self.account_broker = self._load_account_brokers()
         self.use_remote_ib = use_remote_ib
+        self.trade_events_engine = self.main_engine.add_engine(TradeEventsEngine)
 
         # 1. 加载 App
         self.main_engine.add_app(RpcServiceApp)
@@ -407,6 +409,10 @@ class JanusServer:
                 sys_logger.error(f"Connect failed for {acct_name} ({broker_type}): {exc}")
                 if not self._prompt_continue():
                     self.shutdown()
+            if broker_type == "webull":
+                gateway = self.main_engine.get_gateway(acct_name)
+                if gateway:
+                    self.trade_events_engine.register_gateway(gateway, acct_setting)
 
         # 5. 启动 RPC 服务
         rpc_setting = self.config.get_rpc_setting()
