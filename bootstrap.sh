@@ -5,6 +5,14 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IBAPI_PYTHONCLIENT="${1:-${IBAPI_PYTHONCLIENT:-}}"
 WEBULL_VERSION="${WEBULL_VERSION:-1.1.0}"
 VNPY_IB_VERSION="${VNPY_IB_VERSION:-10.40.1.2}"
+WEBULL_DEPS=(
+  cachetools
+  cryptography
+  grpcio
+  grpcio-tools
+  jmespath
+  paho-mqtt
+)
 
 if ! command -v uv >/dev/null 2>&1; then
   echo "uv is required. Install it first: https://astral.sh/uv" >&2
@@ -37,6 +45,7 @@ uv pip install -e . --python .venv
 uv pip install --python .venv "${IBAPI_PYTHONCLIENT}"
 uv pip install --python .venv --no-deps "vnpy_ib==${VNPY_IB_VERSION}"
 uv pip install --python .venv --no-deps "webull-openapi-python-sdk==${WEBULL_VERSION}"
+uv pip install --python .venv "${WEBULL_DEPS[@]}"
 
 cat <<EOF
 Bootstrap complete.

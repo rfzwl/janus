@@ -81,6 +81,9 @@ Bootstrap helper:
 ./bootstrap.sh /path/to/ibapi/pythonclient
 ```
 
+This installs base deps from `pyproject.toml`, then installs `vnpy_ib` and Webull SDK with
+`--no-deps` plus Webull's non-protobuf dependencies explicitly.
+
 3. **Start Server**:
    - `uv run --no-sync python -m janus.server` (recommended)
    - or `.venv/bin/python -m janus.server`
