@@ -472,6 +472,16 @@ class IbAsyncApi:
                         conid=conid,
                         currency=currency,
                     )
+                elif sec_type == "FUT" and conid:
+                    canonical = self._future_canonical_symbol(contract)
+                    if canonical:
+                        registry.ensure_ib_symbol(
+                            symbol=canonical,
+                            conid=conid,
+                            asset_class="FUTURE",
+                            currency=currency,
+                            description=getattr(contract, "symbol", None),
+                        )
             except Exception as exc:
                 self.gateway.write_log(
                     f"Symbol registry update failed for IB holding {contract.symbol}: {exc}"
@@ -502,6 +512,10 @@ class IbAsyncApi:
             pnl=pnl,
             gateway_name=self.gateway_name,
         )
+        pos.last_price = market_price if market_price else None
+        pos.market_value = (market_price * volume) if (market_price and volume) else None
+        pos.cost = (avg_cost * volume) if (avg_cost and volume) else None
+        pos.diluted_cost = avg_cost if avg_cost else None
         self.gateway.on_position(pos)
 
     def _on_account_value(self, value) -> None:
@@ -533,6 +547,19 @@ class IbAsyncApi:
                 pass
 
         self.gateway.on_account(copy(account_data))
+
+    @staticmethod
+    def _future_canonical_symbol(contract: Contract) -> Optional[str]:
+        root = getattr(contract, "symbol", None) or ""
+        if not root:
+            return None
+        expiry = getattr(contract, "lastTradeDateOrContractMonth", None) or ""
+        expiry_str = str(expiry)
+        digits = "".join(ch for ch in expiry_str if ch.isdigit())
+        if len(digits) < 6:
+            return None
+        yymm = digits[2:6]
+        return f"{root.upper()}.{yymm}"
 
     def _on_tickers(self, tickers: set[Ticker]) -> None:
         for ticker in tickers:
