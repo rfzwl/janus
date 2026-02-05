@@ -268,11 +268,11 @@ class JanusTUI:
         f = io.StringIO()
         console = Console(file=f, force_terminal=False, width=120)
 
-        table = Table(title=None, show_edge=False, box=None)
-        table.add_column("Symbol", style="magenta", no_wrap=True)
-        table.add_column("Close", justify="right")
-        table.add_column("VWAP", justify="right")
-        table.add_column("Volume", justify="right")
+        table = Table(title=None, show_edge=False, box=None, pad_edge=False, padding=(0, 1))
+        table.add_column("Sym", style="magenta", no_wrap=True)
+        table.add_column("Close", justify="right", no_wrap=True)
+        table.add_column("VWAP", justify="right", no_wrap=True)
+        table.add_column("Vol", justify="right", no_wrap=True)
 
         snapshots = self.rpc_client.fetch_bar_snapshots()
         if not snapshots:
