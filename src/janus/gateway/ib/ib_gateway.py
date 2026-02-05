@@ -150,6 +150,19 @@ class IbAsyncApi:
 
         def _shutdown() -> None:
             if self._ib:
+                for sub in list(self._bar_subscriptions.values()):
+                    if sub.bars:
+                        try:
+                            self._ib.cancelRealTimeBars(sub.bars)
+                        except Exception:
+                            pass
+                for contract in list(self._subscribed.values()):
+                    try:
+                        self._ib.cancelMktData(contract)
+                    except Exception:
+                        pass
+                self._bar_subscriptions.clear()
+                self._subscribed.clear()
                 self._ib.disconnect()
             if self._loop:
                 self._loop.stop()

@@ -462,7 +462,16 @@ class WebullOfficialGateway(BaseGateway):
         pass
 
     def close(self):
-        pass
+        if self._refresh_timer:
+            try:
+                self._refresh_timer.cancel()
+            except Exception:
+                pass
+            self._refresh_timer = None
+        self._known_orders.clear()
+        self._client_order_id_map.clear()
+        self._order_id_to_client_id.clear()
+        self._last_position_directions.clear()
 
     def query_open_orders(self):
         """
