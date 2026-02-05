@@ -5,6 +5,8 @@ from typing import Any, Dict, Optional
 
 from vnpy.trader.engine import BaseEngine
 from vnpy.trader.event import EVENT_TIMER
+from vnpy.trader.object import LogData
+from vnpy.trader.logger import DEBUG
 
 try:
     from webull.trade.trade_events_client import TradeEventsClient
@@ -79,7 +81,10 @@ class TradeEventsWorker:
             self.gateway.write_log(f"Trade events stopped: {exc}")
 
     def _on_log(self, level: int, message: str) -> None:
-        self.gateway.write_log(f"TradeEvents: {message}")
+        if isinstance(message, str) and "eventType: Ping" in message:
+            return
+        msg = f"TradeEvents: {message}"
+        self.gateway.write_log(msg)
         if self._logger:
             self._logger.log(level, message)
 
@@ -106,7 +111,7 @@ class TradeEventsWorker:
             return
 
         if self._should_log(issue, now):
-            self.gateway.write_log(message)
+            self.gateway.on_log(LogData(msg=message, gateway_name=self.gateway_name, level=DEBUG))
             self._last_health_state = issue
             self._last_health_log_ts = now
 
