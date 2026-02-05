@@ -194,7 +194,7 @@ class JanusServer:
             conid = self._resolve_ib_conid(symbol)
             intent["symbol"] = str(conid)
             if self._is_future_symbol(symbol) and intent.get("exchange") == Exchange.SMART:
-                intent["exchange"] = Exchange.GLOBEX
+                intent["exchange"] = Exchange.CME
             else:
                 intent["exchange"] = Exchange.SMART
 
@@ -391,15 +391,30 @@ class JanusServer:
         if not api or not getattr(api, "status", False):
             raise ValueError(f"IB conId missing for symbol {canonical}: IB gateway not connected")
 
+        exchange = "CME"
+        currency = "USD"
         details = gateway.request_contract_details(
             symbol=root,
-            exchange="GLOBEX",
-            currency="USD",
+            exchange=exchange,
+            currency=currency,
             sec_type="FUT",
             expiry=expiry,
         )
         if not details:
-            raise ValueError(f"IB lookup failed for symbol {canonical}: no futures match")
+            exchange = "GLOBEX"
+            details = gateway.request_contract_details(
+                symbol=root,
+                exchange=exchange,
+                currency=currency,
+                sec_type="FUT",
+                expiry=expiry,
+            )
+        if not details:
+            raise ValueError(
+                "IB lookup failed for symbol "
+                f"{canonical}: no futures match (root={root}, expiry={expiry}, "
+                f"exchange={exchange}, currency={currency})"
+            )
 
         matches = []
         for detail in details:

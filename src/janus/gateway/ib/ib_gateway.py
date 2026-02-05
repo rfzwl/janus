@@ -399,7 +399,21 @@ class IbAsyncApi:
     def _on_error(self, *args) -> None:
         try:
             req_id, code, msg, *_rest = args
-            text = f"IB error {code} (req {req_id}): {msg}"
+            contract = _rest[0] if _rest else None
+            extra = ""
+            if contract is not None:
+                try:
+                    extra = (
+                        f" [contract secType={getattr(contract, 'secType', None)}"
+                        f" symbol={getattr(contract, 'symbol', None)}"
+                        f" expiry={getattr(contract, 'lastTradeDateOrContractMonth', None)}"
+                        f" exchange={getattr(contract, 'exchange', None)}"
+                        f" currency={getattr(contract, 'currency', None)}"
+                        f" conId={getattr(contract, 'conId', None)}]"
+                    )
+                except Exception:
+                    extra = ""
+            text = f"IB error {code} (req {req_id}): {msg}{extra}"
             if code in (2105, 2106):
                 self.gateway.on_log(LogData(msg=text, gateway_name=self.gateway_name, level=DEBUG))
             else:
@@ -691,8 +705,10 @@ class IbAsyncApi:
                         contract.conId = int(symbol)
                         contract.secType = "FUT"
                         contract.symbol = root
-                        contract.lastTradeDateOrContractMonth = yyyymm
-                        contract.exchange = "GLOBEX"
+                        ib_exchange = EXCHANGE_VT2IB.get(exchange, "CME")
+                        if ib_exchange == "SMART":
+                            ib_exchange = "CME"
+                        contract.exchange = ib_exchange
                         contract.currency = record.currency or "USD"
                         return contract
             contract = Contract()
@@ -709,9 +725,9 @@ class IbAsyncApi:
             contract.secType = "FUT"
             contract.symbol = root
             contract.lastTradeDateOrContractMonth = yyyymm
-            ib_exchange = EXCHANGE_VT2IB.get(exchange, "GLOBEX")
+            ib_exchange = EXCHANGE_VT2IB.get(exchange, "CME")
             if ib_exchange == "SMART":
-                ib_exchange = "GLOBEX"
+                ib_exchange = "CME"
             contract.exchange = ib_exchange
             contract.currency = "USD"
             return contract
