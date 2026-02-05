@@ -286,6 +286,24 @@ class IbAsyncApi:
             self.gateway.write_log(f"IB contract details failed: {exc}")
             return []
 
+    def query_open_orders(self) -> None:
+        if not self._loop:
+            return
+
+        def _query() -> None:
+            if not self._ib or not self._connected:
+                return
+
+            async def _req() -> None:
+                try:
+                    await self._ib.reqAllOpenOrdersAsync()
+                except Exception as exc:
+                    self.gateway.write_log(f"IB reqAllOpenOrders failed: {exc}")
+
+            asyncio.create_task(_req())
+
+        self._call_soon(_query)
+
     def _run_loop(self) -> None:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
@@ -795,6 +813,9 @@ class JanusIbGateway(BaseGateway):
 
     def query_position(self) -> None:
         pass
+
+    def query_open_orders(self) -> None:
+        self.api.query_open_orders()
 
     def request_contract_details(self, *args, **kwargs):
         return self.api.request_contract_details(*args, **kwargs)
