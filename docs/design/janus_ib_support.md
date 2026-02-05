@@ -7,7 +7,7 @@
 - Support IB real-time market data and use it to enrich UI/state.
 
 ## Non-goals (for now)
-- Full derivatives support (options/futures) beyond basic symbol mapping.
+- Advanced derivatives workflows (multi-leg options, spreads, Greeks/risk).
 - Cross-broker position netting or automated hedging.
 - Direct portfolio transfer between brokers.
 
@@ -30,7 +30,9 @@
   - `asset_class` (EQUITY | FOREX | FUTURE | OPTION | CRYPTO)
   - `exchange` (SMART for IB equities, SMART/NYSE/NASDAQ for display only)
   - `currency` (USD default)
-- For now, limit to US equities to avoid ambiguous mapping.
+- Equities: `AAPL` style.
+- Futures: `ROOT.YYMM` (e.g., `NQ.2603`).
+- Options (display-only today): `ROOT.YYMMDD.C/P.STRIKE` (e.g., `NQ.260320.C.15000`).
 
 ### Mapping rules
 - IB expects structured contracts (secType/exchange/currency/conId). `ib_async` supports building contracts directly.
@@ -39,6 +41,7 @@
   - canonical -> broker-specific (ib_symbol, ib_exchange, webull_symbol, market)
   - optionally allow conId for IB to avoid ambiguity.
 - IB auto-lookup should apply a default market/exchange filter (e.g., US + SMART) to reduce ambiguity.
+- IB futures default to CME (fallback to GLOBEX when resolving conId).
 
 ### Where mapping lives
 - Config-driven mapping table, with defaults for simple US equities.
@@ -48,8 +51,8 @@
   - log a warning for ambiguous assets.
 
 ## Market Data Strategy (IB streaming)
-- IB gateway already supports `subscribe` via reqMktData; Janus can expose a server-side "subscribe symbol" API.
-- Market data updates (tick events) update a server cache:
+- IB gateway supports `subscribe` via reqMktData and 5-second real-time bars.
+- Market data updates (ticks/bars) update a server cache:
   - `last_price`, `bid/ask`, `timestamp` keyed by canonical symbol.
 - Important: market data does NOT change position quantity.
   - It only updates derived fields (market_value, unrealized PnL) for display.
@@ -59,6 +62,8 @@
 - When IB accounts are loaded and holdings are received, perform symbol lookup to fill missing registry fields.
 - Default filter applies (US + SMART) and only unique matches are persisted.
 - Reference behavior (from taurus): use `reqContractDetails`; if multiple ContractDetails are returned, treat as ambiguous and skip.
+- Futures holdings (FUT) are written to the registry as `ROOT.YYMM`.
+- Options holdings are displayed using canonical-like symbols but are not persisted yet.
 
 ## Order Abstraction (Server Layer)
 ### OrderIntent (broker-agnostic)
@@ -102,6 +107,7 @@ Fields:
 - Extend config.yaml.example with IB connection fields (host/port/client id/account).
 - Optionally add a "market_data_account" for centralized IB streaming.
 - Use `ib_async` for streaming data, reconnection, and order status updates.
+- `sync` triggers IB `reqAllOpenOrders` so orders from other IB clients appear.
 
 ## Cross-Broker Behavior Considerations
 - Orders and positions remain broker-specific; Janus should not merge them.

@@ -8,6 +8,8 @@ Notes for rewriting Janus IB gateway using `ib_async` instead of `vnpy_ib` or `i
 - Server wires broker map in `src/janus/server.py` as `"ib": JanusIbGateway`.
 - `JanusIbGateway.request_contract_details()` is used by `JanusServer.harmony()` for symbol registry fill.
 - Symbol normalization and conId mapping are handled in `src/janus/symbol_registry.py`.
+- Sync triggers `reqAllOpenOrders` so non-Janus IB orders appear in the UI.
+- 5-second real-time bars are available via `bars`/`unbars`.
 
 ## Target Constraints
 - No `vnpy_ib` dependency.
@@ -58,6 +60,8 @@ Notes for rewriting Janus IB gateway using `ib_async` instead of `vnpy_ib` or `i
 - Janus expects conId-based IB mapping from registry.
 - For IB equities, use `Contract(conId=..., secType="STK", exchange="SMART", currency="USD")` when conId is known.
 - For ticker-only requests, use `Stock(symbol, "SMART", "USD")` and call `reqContractDetails` to qualify.
+- Futures use canonical `ROOT.YYMM` with conId stored in the registry.
+- Options are displayed with `ROOT.YYMMDD.C/P.STRIKE` but not persisted in the registry yet.
 
 ## Order Mapping Notes
 - vn.py `OrderRequest` -> `ib_async.order.Order`:
@@ -76,7 +80,7 @@ Notes for rewriting Janus IB gateway using `ib_async` instead of `vnpy_ib` or `i
 - Dependency: use `ib_async` as a normal dependency from PyPI.
 - Connection model: one IB connection per Janus account, each with its own clientId.
 - Market data: subscribe explicitly; no always-on streaming.
-- Data scope: MVP limited to US equities (STK/SMART/USD).
+- Data scope: equities plus basic futures and option display.
 - Account values: prefer pull + push (account summary + streaming updates).
 - Contract details: if multiple results, warn and skip.
 - Harmony: keep a synchronous `request_contract_details()` on the gateway (thread-safe + timeout).

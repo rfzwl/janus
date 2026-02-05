@@ -30,9 +30,10 @@ and `harmony` to backfill missing symbols. IB gateway has been rewritten to use
 
 ## IB Integration
 - `JanusIbGateway` uses `ib_async` directly.
-- IB holdings update registry for `STK` + USD only.
-- Non-equity holdings and non-USD: warn + skip.
+- IB holdings update registry for `STK` + USD and `FUT` (canonical `ROOT.YYMM`).
+- Options holdings are displayed using canonical-like symbols but are not persisted yet.
 - One IB connection per account; reconnect check every ~10s via EVENT_TIMER.
+- Sync triggers `reqAllOpenOrders` so orders from other IB clients appear.
 
 ## Harmony (Phase 3)
 Server-only RPC; client triggers and shows summary.
@@ -44,7 +45,7 @@ Server-only RPC; client triggers and shows summary.
 - On-demand only (no scheduler, no rate limiting).
 
 ## Current Commands
-- Client: `sync`, `harmony` (RPC to server).
+- Client: `sync`, `harmony`, `bars`, `unbars` (RPC to server).
 - Server: `send_order_intent` routes per broker via registry.
 
 ## Open Items / Phase 4

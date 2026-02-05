@@ -19,7 +19,8 @@ This plan consolidates the phased steps from:
 2) Load IB accounts on server startup (connect + initial holdings snapshot).
 3) When holdings load, perform symbol lookup + update:
    - Resolve canonical_symbol where possible.
-   - Fill missing ib_conid via default market lookup.
+   - Fill missing ib_conid via default market lookup for equities.
+   - Persist futures holdings as `ROOT.YYMM` with conId.
    - Apply default filter (US + SMART); only write on unique match.
 
 ## Phase 3 — Harmony command (MVP)
@@ -35,9 +36,9 @@ This plan consolidates the phased steps from:
    - Webull: allow fallback to ticker only when canonical_symbol is allowed.
 
 ## Phase 5 — IB market data
-1) Implement server API for IB tick subscriptions.
-2) Cache tick prices by canonical_symbol; compute derived valuation for display only.
-3) Do not update position quantity/cost from ticks.
+1) Implement server API for IB 5-second real-time bars.
+2) Cache bar prices by canonical_symbol; compute derived valuation for display only.
+3) Do not update position quantity/cost from bars.
 
 ## Phase 6 — Webull trade-events integration
 1) Register account_id -> gateway_name after connect completes.

@@ -11,6 +11,11 @@
 - **gateway_name**: account alias in Janus.
 - **broker**: broker type (e.g., ib, webull).
 
+## Canonical Formats
+- Equities: `AAPL`
+- Futures: `ROOT.YYMM` (e.g., `NQ.2603`)
+- Options (display-only today): `ROOT.YYMMDD.C/P.STRIKE` (e.g., `NQ.260320.C.15000`)
+
 ## Registry Model (Thin)
 A minimal registry keyed by canonical_symbol. Broker-specific fields are optional.
 
@@ -39,14 +44,17 @@ Notes:
 - Webull uses ticker + US market and does not need exchange mapping.
 
 ## Non-Equity Scope
-- Non-equity assets (options/futures) are out of scope for the main registry for now and will be added later as needed.
+- Futures (FUT) are stored in the registry with canonical `ROOT.YYMM`.
+- Options are displayed using canonical-like symbols but are not persisted in the registry yet.
 
 ## Auto-Fill Behavior
-- If registry entry missing for canonical_symbol:
-  1) Attempt IB contract lookup using default market filter.
-  2) If a unique match is found, store `ib_conid`.
-  3) If multiple matches remain, do not write; require manual mapping.
- - Auto-fill can be triggered by holdings load or by the client `harmony` command.
+If registry entry missing for canonical_symbol:
+1. Attempt IB contract lookup using default market filter.
+2. If a unique match is found, store `ib_conid`.
+3. If multiple matches remain, do not write; require manual mapping.
+
+Auto-fill can be triggered by holdings load or by the client `harmony` command.
+Futures are IB-only in Janus; skip Webull fill for `asset_class == "FUTURE"`.
 
 ## Harmony Command (MVP)
 - Server-only RPC; client triggers and receives a summary.
