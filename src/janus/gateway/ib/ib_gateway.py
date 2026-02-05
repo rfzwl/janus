@@ -261,6 +261,7 @@ class IbAsyncApi:
         exchange: str = "SMART",
         currency: str = "USD",
         sec_type: str = "STK",
+        expiry: Optional[str] = None,
         timeout: float = 5.0,
     ) -> list[Any]:
         if not self._loop or not self._ib:
@@ -274,6 +275,8 @@ class IbAsyncApi:
             contract.exchange = exchange
             contract.currency = currency
             contract.secType = sec_type
+            if expiry:
+                contract.lastTradeDateOrContractMonth = expiry
             return await self._ib.reqContractDetailsAsync(contract)
 
         fut = asyncio.run_coroutine_threadsafe(_req(), self._loop)
@@ -561,6 +564,16 @@ class IbAsyncApi:
         yymm = digits[2:6]
         return f"{root.upper()}.{yymm}"
 
+    @staticmethod
+    def _parse_future_symbol(symbol: str) -> Optional[tuple[str, str]]:
+        if not symbol or "." not in symbol:
+            return None
+        root, suffix = symbol.split(".", 1)
+        if len(suffix) != 4 or not suffix.isdigit():
+            return None
+        yyyymm = f"20{suffix}"
+        return root.upper(), yyyymm
+
     def _on_tickers(self, tickers: set[Ticker]) -> None:
         for ticker in tickers:
             tick = self._ticker_to_tickdata(ticker)
@@ -654,6 +667,10 @@ class IbAsyncApi:
             record = registry.get_by_ib_conid(conid)
             if record:
                 return record.canonical_symbol
+        if getattr(contract, "secType", None) == "FUT":
+            canonical = self._future_canonical_symbol(contract)
+            if canonical:
+                return canonical
         symbol = getattr(contract, "symbol", "") or ""
         if symbol:
             return symbol
@@ -663,10 +680,39 @@ class IbAsyncApi:
 
     def _contract_from_symbol(self, symbol: str, exchange: Exchange) -> Contract:
         if symbol.isdigit():
+            registry = getattr(self.gateway, "symbol_registry", None)
+            if registry:
+                record = registry.get_by_ib_conid(int(symbol))
+                if record and record.asset_class == "FUTURE":
+                    future_parts = self._parse_future_symbol(record.canonical_symbol)
+                    if future_parts:
+                        root, yyyymm = future_parts
+                        contract = Contract()
+                        contract.conId = int(symbol)
+                        contract.secType = "FUT"
+                        contract.symbol = root
+                        contract.lastTradeDateOrContractMonth = yyyymm
+                        contract.exchange = "GLOBEX"
+                        contract.currency = record.currency or "USD"
+                        return contract
             contract = Contract()
             contract.conId = int(symbol)
             contract.secType = "STK"
             contract.exchange = "SMART"
+            contract.currency = "USD"
+            return contract
+
+        future_parts = self._parse_future_symbol(symbol)
+        if future_parts:
+            root, yyyymm = future_parts
+            contract = Contract()
+            contract.secType = "FUT"
+            contract.symbol = root
+            contract.lastTradeDateOrContractMonth = yyyymm
+            ib_exchange = EXCHANGE_VT2IB.get(exchange, "GLOBEX")
+            if ib_exchange == "SMART":
+                ib_exchange = "GLOBEX"
+            contract.exchange = ib_exchange
             contract.currency = "USD"
             return contract
 

@@ -193,7 +193,10 @@ class JanusServer:
         elif broker == "ib":
             conid = self._resolve_ib_conid(symbol)
             intent["symbol"] = str(conid)
-            intent["exchange"] = Exchange.SMART
+            if self._is_future_symbol(symbol) and intent.get("exchange") == Exchange.SMART:
+                intent["exchange"] = Exchange.GLOBEX
+            else:
+                intent["exchange"] = Exchange.SMART
 
         return self.main_engine.send_order(intent, gateway_name)
 
@@ -301,19 +304,25 @@ class JanusServer:
         use_rth = bool(settings.get("use_rth", False))
 
         for symbol in symbols:
-            record = self.symbol_registry.get_by_canonical(symbol)
-            if not record or not record.ib_conid:
+            try:
+                conid = self._resolve_ib_conid(symbol)
+            except Exception as exc:
                 self.main_engine.write_log(
-                    f"IB bars default skipped: conId missing for {symbol}"
+                    f"IB bars default skipped for {symbol}: {exc}"
                 )
                 continue
-            req = SubscribeRequest(symbol=str(record.ib_conid), exchange=Exchange.SMART)
+            req = SubscribeRequest(symbol=str(conid), exchange=Exchange.SMART)
             gateway.subscribe_bars(req, what_to_show=what_to_show, use_rth=use_rth)
 
     def _resolve_ib_conid(self, symbol: str) -> int:
         record = self.symbol_registry.get_by_canonical(symbol)
         if record and record.ib_conid:
             return int(record.ib_conid)
+
+        future_parts = self._parse_future_symbol(symbol)
+        if future_parts:
+            root, _yymm, yyyymm = future_parts
+            return self._resolve_ib_future_conid(symbol, root, yyyymm)
 
         gateway = self._get_gateway_for_broker("ib")
         if not gateway:
@@ -357,6 +366,70 @@ class JanusServer:
             conid=conid,
             currency=getattr(contract, "currency", None),
             description=description,
+        )
+        return int(record.ib_conid or conid)
+
+    @staticmethod
+    def _parse_future_symbol(symbol: str) -> tuple[str, str, str] | None:
+        if not symbol or "." not in symbol:
+            return None
+        root, suffix = symbol.split(".", 1)
+        if len(suffix) != 4 or not suffix.isdigit():
+            return None
+        yyyymm = f"20{suffix}"
+        return root.upper(), suffix, yyyymm
+
+    @staticmethod
+    def _is_future_symbol(symbol: str) -> bool:
+        return JanusServer._parse_future_symbol(symbol) is not None
+
+    def _resolve_ib_future_conid(self, canonical: str, root: str, expiry: str) -> int:
+        gateway = self._get_gateway_for_broker("ib")
+        if not gateway:
+            raise ValueError(f"IB conId missing for symbol {canonical}: no connected IB gateway")
+        api = getattr(gateway, "api", None)
+        if not api or not getattr(api, "status", False):
+            raise ValueError(f"IB conId missing for symbol {canonical}: IB gateway not connected")
+
+        details = gateway.request_contract_details(
+            symbol=root,
+            exchange="GLOBEX",
+            currency="USD",
+            sec_type="FUT",
+            expiry=expiry,
+        )
+        if not details:
+            raise ValueError(f"IB lookup failed for symbol {canonical}: no futures match")
+
+        matches = []
+        for detail in details:
+            contract = getattr(detail, "contract", None)
+            if not contract:
+                continue
+            sec_type = getattr(contract, "secType", None)
+            conid = getattr(contract, "conId", None)
+            contract_expiry = getattr(contract, "lastTradeDateOrContractMonth", None)
+            if sec_type != "FUT" or not conid:
+                continue
+            if contract_expiry:
+                contract_expiry_str = str(contract_expiry)
+                if not contract_expiry_str.startswith(expiry):
+                    continue
+            matches.append((detail, contract))
+
+        if len(matches) != 1:
+            raise ValueError(
+                f"IB lookup failed for symbol {canonical}: ambiguous ({len(matches)} matches)"
+            )
+
+        detail, contract = matches[0]
+        conid = int(contract.conId)
+        record = self.symbol_registry.ensure_ib_symbol(
+            symbol=canonical,
+            conid=conid,
+            asset_class="FUTURE",
+            currency=getattr(contract, "currency", None),
+            description=getattr(contract, "symbol", None),
         )
         return int(record.ib_conid or conid)
 
