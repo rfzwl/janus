@@ -111,7 +111,9 @@ class TradeEventsWorker:
             return
 
         if self._should_log(issue, now):
-            self.gateway.on_log(LogData(msg=message, gateway_name=self.gateway_name, level=DEBUG))
+            # Suppress health-check logs from client UI; keep internal logger only.
+            if self._logger:
+                self._logger.debug(message)
             self._last_health_state = issue
             self._last_health_log_ts = now
 
