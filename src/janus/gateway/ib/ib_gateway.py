@@ -1,7 +1,7 @@
 import asyncio
 from copy import copy
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from threading import Event as ThreadEvent
 from threading import Lock, Thread
 from typing import Any, Dict, Optional
@@ -12,6 +12,7 @@ from ib_async.ib import StartupFetch
 from ib_async.order import LimitOrder, MarketOrder, StopLimitOrder, StopOrder
 from ib_async.ticker import Ticker
 from ib_async.util import isNan
+from zoneinfo import ZoneInfo
 
 from vnpy.event import Event
 from vnpy.trader.event import EVENT_TIMER
@@ -41,6 +42,11 @@ STATUS_IB2VT: dict[str, Status] = {
     "Filled": Status.ALLTRADED,
     "Inactive": Status.REJECTED,
 }
+
+try:
+    PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
+except Exception:
+    PACIFIC_TZ = timezone.utc
 
 DIRECTION_VT2IB: dict[Direction, str] = {
     Direction.LONG: "BUY",
@@ -682,7 +688,17 @@ class IbAsyncApi:
             "vwap": float(vwap_val),
         }
 
-        self.gateway.write_log(f"BAR {symbol} close={close_display}")
+        bar_time = getattr(bar, "time", None)
+        local_now = datetime.now(PACIFIC_TZ)
+        if isinstance(bar_time, datetime):
+            if bar_time.tzinfo is None:
+                bar_time = bar_time.replace(tzinfo=timezone.utc)
+            bar_time = bar_time.astimezone(PACIFIC_TZ)
+            data_label = bar_time.strftime("%H%M:%S")
+        else:
+            data_label = local_now.strftime("%H%M:%S")
+        local_label = f"{local_now.strftime('%S')}.{local_now.microsecond // 1000:03d}"
+        self.gateway.write_log(f"BAR {symbol} {data_label} [{local_label}] close={close_display}")
 
     def _ticker_to_tickdata(self, ticker: Ticker) -> Optional[TickData]:
         contract = ticker.contract
