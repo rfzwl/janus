@@ -188,13 +188,61 @@ class JanusServer:
             record = self.symbol_registry.ensure_webull_symbol(symbol)
             intent["symbol"] = record.webull_ticker or record.canonical_symbol
         elif broker == "ib":
-            record = self.symbol_registry.get_by_canonical(symbol)
-            if not record or not record.ib_conid:
-                raise ValueError(f"IB conId missing for symbol {symbol}")
-            intent["symbol"] = str(record.ib_conid)
+            conid = self._resolve_ib_conid(symbol)
+            intent["symbol"] = str(conid)
             intent["exchange"] = Exchange.SMART
 
         return self.main_engine.send_order(intent, gateway_name)
+
+    def _resolve_ib_conid(self, symbol: str) -> int:
+        record = self.symbol_registry.get_by_canonical(symbol)
+        if record and record.ib_conid:
+            return int(record.ib_conid)
+
+        gateway = self._get_gateway_for_broker("ib")
+        if not gateway:
+            raise ValueError(f"IB conId missing for symbol {symbol}: no connected IB gateway")
+        api = getattr(gateway, "api", None)
+        if not api or not getattr(api, "status", False):
+            raise ValueError(f"IB conId missing for symbol {symbol}: IB gateway not connected")
+
+        details = gateway.request_contract_details(symbol=symbol)
+        if not details:
+            raise ValueError(f"IB lookup failed for symbol {symbol}: no contract details")
+
+        matches = []
+        for detail in details:
+            contract = getattr(detail, "contract", None)
+            if not contract:
+                continue
+            sec_type = getattr(contract, "secType", None)
+            currency = getattr(contract, "currency", None)
+            conid = getattr(contract, "conId", None)
+            if sec_type != "STK":
+                continue
+            if not currency or currency.upper() != "USD":
+                continue
+            if not conid:
+                continue
+            matches.append((detail, contract))
+
+        if not matches:
+            raise ValueError(f"IB lookup failed for symbol {symbol}: no US equity match")
+        if len(matches) != 1:
+            raise ValueError(
+                f"IB lookup failed for symbol {symbol}: ambiguous ({len(matches)} matches)"
+            )
+
+        detail, contract = matches[0]
+        conid = int(contract.conId)
+        description = getattr(detail, "longName", None)
+        record = self.symbol_registry.ensure_ib_symbol(
+            symbol=symbol,
+            conid=conid,
+            currency=getattr(contract, "currency", None),
+            description=description,
+        )
+        return int(record.ib_conid or conid)
 
     def sync_all(self):
         """主动触发所有 Gateway 同步数据"""
