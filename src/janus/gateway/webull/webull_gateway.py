@@ -53,6 +53,7 @@ class WebullOfficialGateway(BaseGateway):
         self._last_position_directions: Dict[str, Direction] = {}
         self._known_orders: Dict[str, OrderData] = {}
         self._client_order_id_map: Dict[str, str] = {}
+        self._order_id_to_client_id: Dict[str, str] = {}
         self._refresh_lock = Lock()
         self._refresh_timer: Optional[Timer] = None
         self._trade_events_debounce = 1.0
@@ -254,6 +255,7 @@ class WebullOfficialGateway(BaseGateway):
                 self.on_order(order)
                 self._known_orders[order.orderid] = order
                 self._client_order_id_map[client_order_id] = order.orderid
+                self._order_id_to_client_id[order.orderid] = client_order_id
 
                 return order.vt_orderid
             else:
@@ -272,7 +274,18 @@ class WebullOfficialGateway(BaseGateway):
         """
         if not self.trade_client: return
         try:
-            self.trade_client.trade.cancel_order(self.account_id, req.orderid)
+            client_order_id = self._order_id_to_client_id.get(req.orderid)
+            if not client_order_id:
+                for cid, oid in self._client_order_id_map.items():
+                    if oid == req.orderid:
+                        client_order_id = cid
+                        break
+            client_order_id = client_order_id or req.orderid
+
+            if not hasattr(self.trade_client, "order_v2") or not hasattr(self.trade_client.order_v2, "cancel_order"):
+                raise AttributeError("TradeClient.order_v2.cancel_order unavailable")
+            self.trade_client.order_v2.cancel_order(self.account_id, client_order_id)
+
             self.on_log(f"已发送撤单: {req.orderid}")
         except Exception as e:
             self.on_log(f"撤单异常: {e}")
@@ -536,11 +549,22 @@ class WebullOfficialGateway(BaseGateway):
 
                     price = self._safe_float(self._pick_value(detail, "limit_price", "lmtPrice", "price")) or 0
 
-                    order_id = self._pick_value(detail, "order_id", "orderId", "client_order_id")
+                    order_id = self._pick_value(detail, "order_id", "orderId")
                     if not order_id:
-                        order_id = self._pick_value(item, "order_id", "orderId", "client_order_id")
-                    if not order_id:
+                        order_id = self._pick_value(item, "order_id", "orderId")
+
+                    client_order_id = self._pick_value(
+                        detail, "client_order_id", "clientOrderId"
+                    )
+                    if not client_order_id:
+                        client_order_id = self._pick_value(
+                            item, "client_order_id", "clientOrderId"
+                        )
+
+                    if not order_id and not client_order_id:
                         continue
+                    if not order_id:
+                        order_id = client_order_id
 
                     order = OrderData(
                         orderid=str(order_id),
@@ -557,6 +581,9 @@ class WebullOfficialGateway(BaseGateway):
                     self.on_order(order)
                     current_open_orders[order.orderid] = order
                     self._known_orders[order.orderid] = order
+                    if client_order_id:
+                        self._client_order_id_map[str(client_order_id)] = str(order_id)
+                        self._order_id_to_client_id[str(order_id)] = str(client_order_id)
 
                 missing_order_ids = set(self._known_orders) - set(current_open_orders)
                 for order_id in missing_order_ids:
