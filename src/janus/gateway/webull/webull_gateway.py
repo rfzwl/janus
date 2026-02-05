@@ -682,6 +682,7 @@ class WebullOfficialGateway(BaseGateway):
                 status = Status.NOTTRADED
 
         scene_type = self._pick_value(data, "scene_type", "sceneType")
+        failed_scene = False
         if isinstance(scene_type, str):
             scene_type = scene_type.upper()
             if scene_type == "FINAL_FILLED":
@@ -690,6 +691,15 @@ class WebullOfficialGateway(BaseGateway):
                 status = Status.PARTTRADED
             elif scene_type in ("PLACE_FAILED", "MODIFY_FAILED", "CANCEL_FAILED"):
                 status = Status.REJECTED
+                failed_scene = True
+                safe_payload = str(data).replace("{", "{{").replace("}", "}}")
+                self.on_log(
+                    LogData(
+                        msg=f"Webull order failed payload: {safe_payload}",
+                        gateway_name=self.gateway_name,
+                        level=logging.DEBUG,
+                    )
+                )
             elif scene_type == "CANCEL_SUCCESS":
                 status = Status.CANCELLED
 
@@ -701,6 +711,26 @@ class WebullOfficialGateway(BaseGateway):
                 status = Status.ALLTRADED
             elif traded > 0:
                 status = Status.PARTTRADED
+
+        if failed_scene and (not order_id or str(order_id) not in self._known_orders):
+            for candidate in self._known_orders.values():
+                if not candidate.is_active():
+                    continue
+                if symbol and candidate.symbol != symbol:
+                    continue
+                if direction and candidate.direction != direction:
+                    continue
+                if order_type and candidate.type != order_type:
+                    continue
+                if total and candidate.volume and abs(candidate.volume - total) > 1e-6:
+                    continue
+                if price and candidate.price and abs(candidate.price - price) > 1e-6:
+                    continue
+                order_id = candidate.orderid
+                if client_order_id:
+                    self._client_order_id_map[str(client_order_id)] = str(order_id)
+                    self._order_id_to_client_id[str(order_id)] = str(client_order_id)
+                break
 
         order = self._known_orders.get(str(order_id))
         if not order:
@@ -730,6 +760,17 @@ class WebullOfficialGateway(BaseGateway):
 
         self._known_orders[str(order_id)] = order
         self.on_order(copy(order))
+
+        if failed_scene:
+            side_label = side if isinstance(side, str) else None
+            status_label = status_raw if isinstance(status_raw, str) else "FAILED"
+            summary = (
+                f"Webull order failed: symbol={symbol or '-'} "
+                f"side={side_label or '-'} qty={total or 0} "
+                f"type={order_type_raw or order_type.name} "
+                f"status={status_label} scene={scene_type or '-'}"
+            )
+            self.write_log(summary)
 
         if scene_type in ("FINAL_FILLED", "FILLED", "CANCEL_SUCCESS") or status in (
             Status.ALLTRADED,

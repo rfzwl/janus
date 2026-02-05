@@ -82,13 +82,13 @@ class JanusTUI:
         )
         self._watch_last_dt = None
 
-        self._bottom_spacer = Window(height=Dimension(weight=1))
+        self.log_frame = Frame(self.output_field, title="Logs")
         self.input_frame = Frame(self.input_field, title="Input")
         self.bottom_container = VSplit(
             [
                 HSplit(
                     [
-                        self._bottom_spacer,
+                        self.log_frame,
                         self.input_frame,
                     ],
                     width=Dimension(weight=65),
