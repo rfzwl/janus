@@ -701,10 +701,22 @@ class WebullOfficialGateway(BaseGateway):
             elif scene_type in ("PLACE_FAILED", "MODIFY_FAILED", "CANCEL_FAILED"):
                 status = Status.REJECTED
                 failed_scene = True
-                safe_payload = str(data).replace("{", "{{").replace("}", "}}")
+                request_id = self._pick_value(data, "request_id", "requestId")
+                fail_detail = {
+                    "symbol": symbol,
+                    "side": side,
+                    "qty": total,
+                    "order_type": order_type_raw,
+                    "status": status_raw,
+                    "scene": scene_type,
+                    "client_order_id": client_order_id,
+                    "request_id": request_id,
+                    "instrument_id": self._pick_value(data, "instrument_id", "instrumentId"),
+                }
+                safe_detail = str(fail_detail).replace("{", "{{").replace("}", "}}")
                 self.on_log(
                     LogData(
-                        msg=f"Webull order failed payload: {safe_payload}",
+                        msg=f"Webull order failed detail: {safe_detail}",
                         gateway_name=self.gateway_name,
                         level=logging.DEBUG,
                     )
