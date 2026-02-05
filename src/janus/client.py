@@ -44,7 +44,8 @@ class JanusRpcClient(RpcClient):
                     
             case "eLog":
                 if self.tui:
-                    self.tui.log(f"[Server] {payload.msg}")
+                    gateway = getattr(payload, "gateway_name", "") or "Server"
+                    self.tui.log(f"[Server][{gateway}] {payload.msg}")
 
     def get_open_orders(self, account: Optional[str] = None) -> List[OrderData]:
         target_account = account or self.default_account
