@@ -101,6 +101,10 @@ Webull gRPC -> EventsClient -> TradeEventsManager -> Webull gateway (account ali
   - enable: bool (default true for Webull)
   - host: optional gRPC endpoint override (PRD `events-api.webull.com`; UAT `us-openapi-alb.uat.webullbroker.com`)
   - region_id: already present in account config
+  - health_check_seconds: periodic health check interval (default 60)
+  - stale_seconds: warn if no messages for this long (default 300)
+  - startup_grace_seconds: suppress warnings during initial connect (default 30)
+  - health_log_interval: re-log same health issue interval (default 300)
 - If host unset, EventsClient uses SDK defaults based on region_id.
 
 ## Reliability / Reconnect Strategy

@@ -11,6 +11,10 @@ accounts:
       enabled: true
       host: ""                    # optional override (default from SDK)
       debounce_seconds: 1.0
+      health_check_seconds: 60
+      stale_seconds: 300
+      startup_grace_seconds: 30
+      health_log_interval: 300
 
   - name: "webull_work"           # 另一个 Webull 账户
     broker: "webull"
@@ -21,6 +25,10 @@ accounts:
       enabled: true
       host: ""
       debounce_seconds: 1.0
+      health_check_seconds: 60
+      stale_seconds: 300
+      startup_grace_seconds: 30
+      health_log_interval: 300
 
   - name: "ib_main"               # IB 账户
     broker: "ib"
