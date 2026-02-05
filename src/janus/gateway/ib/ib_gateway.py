@@ -597,6 +597,41 @@ class IbAsyncApi:
         return f"{root.upper()}.{yymm}"
 
     @staticmethod
+    def _option_canonical_symbol(contract: Contract) -> Optional[str]:
+        root = getattr(contract, "symbol", None) or ""
+        if not root:
+            return None
+        expiry = getattr(contract, "lastTradeDateOrContractMonth", None) or ""
+        digits = "".join(ch for ch in str(expiry) if ch.isdigit())
+        yymmdd = ""
+        if len(digits) >= 8:
+            yymmdd = digits[2:8]
+        elif len(digits) == 6:
+            yymmdd = digits
+        right = getattr(contract, "right", None) or ""
+        strike = getattr(contract, "strike", None)
+        strike_str = ""
+        if strike is not None:
+            try:
+                strike_val = float(strike)
+                if strike_val.is_integer():
+                    strike_str = str(int(strike_val))
+                else:
+                    strike_str = f"{strike_val:.8f}".rstrip("0").rstrip(".")
+            except Exception:
+                strike_str = str(strike)
+        parts = [root.upper()]
+        if yymmdd:
+            parts.append(yymmdd)
+        if right:
+            parts.append(right.upper())
+        if strike_str:
+            parts.append(strike_str)
+        if len(parts) == 1:
+            return None
+        return ".".join(parts)
+
+    @staticmethod
     def _parse_future_symbol(symbol: str) -> Optional[tuple[str, str]]:
         if not symbol or "." not in symbol:
             return None
@@ -699,7 +734,12 @@ class IbAsyncApi:
             record = registry.get_by_ib_conid(conid)
             if record:
                 return record.canonical_symbol
-        if getattr(contract, "secType", None) == "FUT":
+        sec_type = getattr(contract, "secType", None)
+        if sec_type in ("OPT", "FOP"):
+            canonical = self._option_canonical_symbol(contract)
+            if canonical:
+                return canonical
+        if sec_type == "FUT":
             canonical = self._future_canonical_symbol(contract)
             if canonical:
                 return canonical

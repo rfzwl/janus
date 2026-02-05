@@ -14,6 +14,8 @@ from rich.table import Table
 import io
 import queue
 
+from vnpy.trader.constant import Direction
+
 class JanusTUI:
     def __init__(self, rpc_client, history_path: str = ".janus_history"):
         self.rpc_client = rpc_client
@@ -214,9 +216,12 @@ class JanusTUI:
             if cost is None and pos.price:
                 cost = pos.price
             diluted_cost = getattr(pos, "diluted_cost", None)
+            qty = pos.volume
+            if getattr(pos, "direction", None) == Direction.SHORT:
+                qty = -qty
             table.add_row(
                 pos.symbol,
-                fmt(pos.volume),
+                fmt(qty),
                 fmt(last_price),
                 fmt(market_value),
                 fmt(cost),
