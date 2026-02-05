@@ -391,6 +391,9 @@ class JanusServer:
             for record in self.symbol_registry.list_records():
                 if record.webull_ticker:
                     continue
+                if record.asset_class == "FUTURE":
+                    skipped.append(f"{record.canonical_symbol} (future)")
+                    continue
                 try:
                     self.symbol_registry.ensure_webull_symbol(record.canonical_symbol)
                     updated.append(record.canonical_symbol)
