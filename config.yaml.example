@@ -36,6 +36,11 @@ accounts:
     port: 7497
     client_id: 1
     account: ""
+    ib_market_data:
+      default_symbols: ["AAPL"]
+      bar_size_seconds: 5
+      what_to_show: "TRADES"
+      use_rth: false
 
 # RPC 服务配置
 rpc:

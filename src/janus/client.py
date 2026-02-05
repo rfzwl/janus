@@ -90,6 +90,10 @@ class JanusRpcClient(RpcClient):
                 self.request_sync(log_func=log_func)
             case "harmony":
                 self.request_harmony(log_func=log_func)
+            case "bars":
+                self._handle_bars_command(parts, log_func, account_override=account_override)
+            case "unbars":
+                self._handle_unbars_command(parts, log_func, account_override=account_override)
             case _:
                 log_func(f"Unknown command: {parts[0]}")
 
@@ -146,6 +150,8 @@ class JanusRpcClient(RpcClient):
             "  connect                 Subscribe to all events",
             "  sync                    Sync account, positions, and open orders",
             "  harmony                 Fill missing symbol mappings (server-side)",
+            "  bars <symbol> [rth]     Subscribe to 5s IB bars (default all-hours)",
+            "  unbars <symbol>         Unsubscribe from 5s IB bars",
             "  help [command]",
             "  exit|quit",
             "",
@@ -172,6 +178,8 @@ class JanusRpcClient(RpcClient):
             "connect": "Usage: connect  (subscribe to all events)",
             "sync": "Usage: sync  (sync current account)",
             "harmony": "Usage: harmony  (fill missing symbol mappings)",
+            "bars": "Usage: bars <symbol> [rth]  (subscribe to 5s bars)",
+            "unbars": "Usage: unbars <symbol>  (unsubscribe from 5s bars)",
             "help": "Usage: help [command]",
             "exit": "Usage: exit  (stop remote server and quit)",
             "quit": "Usage: quit  (quit client)",
@@ -252,6 +260,42 @@ class JanusRpcClient(RpcClient):
         except Exception as e:
             self.log_callback(f"Order Error: {e}")
 
+    def _handle_bars_command(
+        self,
+        parts: list,
+        log_func: Callable,
+        account_override: Optional[str] = None,
+    ) -> None:
+        if len(parts) < 2:
+            log_func("Usage: bars <symbol> [rth]")
+            return
+
+        symbol = parts[1]
+        rth = False
+        if len(parts) >= 3:
+            if parts[2].lower() == "rth":
+                rth = True
+            else:
+                log_func("Usage: bars <symbol> [rth]")
+                return
+
+        account = account_override or self.default_account
+        self.request_bars(symbol, account=account, rth=rth, log_func=log_func)
+
+    def _handle_unbars_command(
+        self,
+        parts: list,
+        log_func: Callable,
+        account_override: Optional[str] = None,
+    ) -> None:
+        if len(parts) < 2:
+            log_func("Usage: unbars <symbol>")
+            return
+
+        symbol = parts[1]
+        account = account_override or self.default_account
+        self.request_unbars(symbol, account=account, log_func=log_func)
+
     def stop_remote_server(self):
         try:
             if hasattr(self, "remote_exit"):
@@ -291,6 +335,49 @@ class JanusRpcClient(RpcClient):
                 logger(str(res))
         except Exception as e:
             logger(f"Harmony failed: {e}")
+
+    def request_bars(
+        self,
+        symbol: str,
+        account: Optional[str] = None,
+        rth: bool = False,
+        log_func: Optional[Callable[[str], None]] = None,
+    ):
+        logger = log_func or self.log_callback or print
+        if not hasattr(self, "_socket_req"):
+            return
+        remote = getattr(self, "subscribe_bars", None)
+        if not remote:
+            logger("Bars subscription not available on server.")
+            return
+        target_account = account or self.default_account
+        try:
+            res = remote([symbol], target_account, rth)
+            if res is not None:
+                logger(str(res))
+        except Exception as e:
+            logger(f"Bars subscription failed: {e}")
+
+    def request_unbars(
+        self,
+        symbol: str,
+        account: Optional[str] = None,
+        log_func: Optional[Callable[[str], None]] = None,
+    ):
+        logger = log_func or self.log_callback or print
+        if not hasattr(self, "_socket_req"):
+            return
+        remote = getattr(self, "unsubscribe_bars", None)
+        if not remote:
+            logger("Bars unsubscribe not available on server.")
+            return
+        target_account = account or self.default_account
+        try:
+            res = remote([symbol], target_account)
+            if res is not None:
+                logger(str(res))
+        except Exception as e:
+            logger(f"Bars unsubscribe failed: {e}")
 
     def _refresh_snapshot(self, account: str, logger: Callable[[str], None]):
         try:

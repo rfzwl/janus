@@ -1,11 +1,12 @@
 import asyncio
 from copy import copy
+from dataclasses import dataclass
 from datetime import datetime
 from threading import Event as ThreadEvent
 from threading import Lock, Thread
 from typing import Any, Dict, Optional
 
-from ib_async import IB
+from ib_async import IB, RealTimeBarList
 from ib_async.contract import Contract, Stock
 from ib_async.ib import StartupFetch
 from ib_async.order import LimitOrder, MarketOrder, StopLimitOrder, StopOrder
@@ -83,6 +84,14 @@ ACCOUNTFIELD_IB2VT: dict[str, str] = {
 }
 
 
+@dataclass
+class BarSubscription:
+    contract: Contract
+    what_to_show: str
+    use_rth: bool
+    bars: Optional[RealTimeBarList] = None
+
+
 class IbAsyncApi:
     def __init__(self, gateway: "JanusIbGateway") -> None:
         self.gateway = gateway
@@ -104,9 +113,11 @@ class IbAsyncApi:
         self._lock = Lock()
 
         self._subscribed: Dict[str, Contract] = {}
+        self._bar_subscriptions: Dict[str, "BarSubscription"] = {}
         self._accounts: Dict[str, AccountData] = {}
         self._seen_trades: set[str] = set()
         self._last_position_direction: Dict[str, Direction] = {}
+
 
     @property
     def status(self) -> bool:
@@ -157,6 +168,51 @@ class IbAsyncApi:
             self._ib.reqMktData(contract)
 
         self._call_soon(_subscribe)
+
+    def subscribe_bars(
+        self,
+        req: SubscribeRequest,
+        what_to_show: str = "TRADES",
+        use_rth: bool = False,
+    ) -> None:
+        if not self._loop:
+            return
+
+        what_to_show = (what_to_show or "TRADES").upper()
+
+        def _subscribe() -> None:
+            existing = self._bar_subscriptions.get(req.vt_symbol)
+            if existing:
+                if existing.what_to_show == what_to_show and existing.use_rth == use_rth:
+                    return
+                if self._ib and existing.bars:
+                    try:
+                        self._ib.cancelRealTimeBars(existing.bars)
+                    except Exception:
+                        pass
+            contract = self._contract_from_symbol(req.symbol, req.exchange)
+            sub = BarSubscription(contract=contract, what_to_show=what_to_show, use_rth=use_rth)
+            self._bar_subscriptions[req.vt_symbol] = sub
+            if not self._ib or not self._connected:
+                return
+            sub.bars = self._ib.reqRealTimeBars(contract, 5, what_to_show, use_rth)
+
+        self._call_soon(_subscribe)
+
+    def unsubscribe_bars(self, req: SubscribeRequest) -> None:
+        if not self._loop:
+            return
+
+        def _unsubscribe() -> None:
+            sub = self._bar_subscriptions.pop(req.vt_symbol, None)
+            if not sub or not self._ib or not sub.bars:
+                return
+            try:
+                self._ib.cancelRealTimeBars(sub.bars)
+            except Exception as exc:
+                self.gateway.write_log(f"IB cancel bars failed: {exc}")
+
+        self._call_soon(_unsubscribe)
 
     def send_order(
         self,
@@ -246,6 +302,7 @@ class IbAsyncApi:
         self._ib.accountValueEvent += self._on_account_value
         self._ib.accountSummaryEvent += self._on_account_summary
         self._ib.pendingTickersEvent += self._on_tickers
+        self._ib.barUpdateEvent += self._on_bar_update
         self._ib.errorEvent += self._on_error
 
     def _call_soon(self, func, *args) -> None:
@@ -324,6 +381,10 @@ class IbAsyncApi:
         if self._ib:
             for contract in self._subscribed.values():
                 self._ib.reqMktData(contract)
+            for sub in self._bar_subscriptions.values():
+                sub.bars = self._ib.reqRealTimeBars(
+                    sub.contract, 5, sub.what_to_show, sub.use_rth
+                )
             asyncio.create_task(self._ib.reqAccountSummaryAsync())
 
     def _on_disconnected(self) -> None:
@@ -473,6 +534,43 @@ class IbAsyncApi:
             if tick:
                 self.gateway.on_tick(tick)
 
+    def _on_bar_update(self, bars: RealTimeBarList, has_new_bar: bool) -> None:
+        if not has_new_bar or not bars:
+            return
+        bar = bars[-1]
+        contract = getattr(bars, "contract", None)
+        symbol = self._symbol_from_contract(contract) if contract else ""
+        if not symbol and contract:
+            symbol = getattr(contract, "symbol", "") or ""
+        if not symbol:
+            return
+
+        open_val = getattr(bar, "open_", getattr(bar, "open", 0.0))
+        high_val = getattr(bar, "high", 0.0)
+        low_val = getattr(bar, "low", 0.0)
+        close_val = getattr(bar, "close", 0.0)
+        volume_val = getattr(bar, "volume", 0.0)
+        vwap_val = getattr(bar, "wap", getattr(bar, "average", 0.0))
+
+        close_display = close_val
+        if close_display in (None, 0) or isNan(close_display):
+            if vwap_val not in (None, 0) and not isNan(vwap_val):
+                close_display = vwap_val
+            else:
+                close_display = open_val
+
+        self.gateway.bar_cache[symbol] = {
+            "time": getattr(bar, "time", None),
+            "open": float(open_val),
+            "high": float(high_val),
+            "low": float(low_val),
+            "close": float(close_val),
+            "volume": float(volume_val),
+            "vwap": float(vwap_val),
+        }
+
+        self.gateway.write_log(f"BAR {symbol} close={close_display}")
+
     def _ticker_to_tickdata(self, ticker: Ticker) -> Optional[TickData]:
         contract = ticker.contract
         if not contract:
@@ -548,6 +646,7 @@ class JanusIbGateway(BaseGateway):
         super().__init__(event_engine, gateway_name)
         self.api = IbAsyncApi(self)
         self.symbol_registry = None
+        self.bar_cache: Dict[str, Dict[str, Any]] = {}
         self._timer_count = 0
 
     def connect(self, setting: dict) -> None:
@@ -569,6 +668,17 @@ class JanusIbGateway(BaseGateway):
 
     def subscribe(self, req: SubscribeRequest) -> None:
         self.api.subscribe(req)
+
+    def subscribe_bars(
+        self,
+        req: SubscribeRequest,
+        what_to_show: str = "TRADES",
+        use_rth: bool = False,
+    ) -> None:
+        self.api.subscribe_bars(req, what_to_show=what_to_show, use_rth=use_rth)
+
+    def unsubscribe_bars(self, req: SubscribeRequest) -> None:
+        self.api.unsubscribe_bars(req)
 
     def send_order(self, req: OrderRequest | dict) -> str:
         stop_price = None

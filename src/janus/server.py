@@ -7,7 +7,7 @@ from typing import Any
 from vnpy.event import EventEngine
 from vnpy.trader.engine import MainEngine
 from vnpy.trader.event import EVENT_LOG
-from vnpy.trader.object import LogData
+from vnpy.trader.object import LogData, SubscribeRequest
 from vnpy_rpcservice import RpcServiceApp
 
 from .gateway.webull.webull_gateway import WebullOfficialGateway
@@ -55,6 +55,8 @@ class JanusServer:
         self.rpc_engine.server.register(self.sync_gateway)
         self.rpc_engine.server.register(self.send_order)
         self.rpc_engine.server.register(self.harmony)
+        self.rpc_engine.server.register(self.subscribe_bars)
+        self.rpc_engine.server.register(self.unsubscribe_bars)
 
     def _init_symbol_registry(self) -> SymbolRegistry:
         try:
@@ -193,6 +195,93 @@ class JanusServer:
             intent["exchange"] = Exchange.SMART
 
         return self.main_engine.send_order(intent, gateway_name)
+
+    def subscribe_bars(self, symbols: list[str] | str, account: str, rth: bool = False) -> str:
+        gateway = self.main_engine.get_gateway(account)
+        if not gateway:
+            raise ValueError(f"Gateway not found: {account}")
+        if self.account_broker.get(account) != "ib":
+            raise ValueError(f"Bars subscription only supported for IB accounts: {account}")
+
+        if isinstance(symbols, str):
+            symbols = [symbols]
+        if not symbols:
+            raise ValueError("No symbols provided for bar subscription")
+
+        market_settings = self._get_ib_market_data_settings(account)
+        what_to_show = self._normalize_what_to_show(market_settings.get("what_to_show"))
+        use_rth = bool(rth)
+
+        subscribed = []
+        for symbol in symbols:
+            conid = self._resolve_ib_conid(symbol)
+            req = SubscribeRequest(symbol=str(conid), exchange=Exchange.SMART)
+            gateway.subscribe_bars(req, what_to_show=what_to_show, use_rth=use_rth)
+            subscribed.append(symbol)
+
+        return f"IB bars subscribed: {', '.join(subscribed)} (rth={use_rth})"
+
+    def unsubscribe_bars(self, symbols: list[str] | str, account: str) -> str:
+        gateway = self.main_engine.get_gateway(account)
+        if not gateway:
+            raise ValueError(f"Gateway not found: {account}")
+        if self.account_broker.get(account) != "ib":
+            raise ValueError(f"Bars unsubscribe only supported for IB accounts: {account}")
+
+        if isinstance(symbols, str):
+            symbols = [symbols]
+        if not symbols:
+            raise ValueError("No symbols provided for bar unsubscribe")
+
+        unsubscribed = []
+        for symbol in symbols:
+            conid = self._resolve_ib_conid(symbol)
+            req = SubscribeRequest(symbol=str(conid), exchange=Exchange.SMART)
+            gateway.unsubscribe_bars(req)
+            unsubscribed.append(symbol)
+
+        return f"IB bars unsubscribed: {', '.join(unsubscribed)}"
+
+    def _get_ib_market_data_settings(self, account: str) -> dict:
+        for acct in self.config.get_all_accounts():
+            if acct.get("name") == account:
+                setting = acct.get("ib_market_data") or {}
+                return setting if isinstance(setting, dict) else {}
+        return {}
+
+    @staticmethod
+    def _normalize_what_to_show(value: Any) -> str:
+        if not value:
+            return "TRADES"
+        upper = str(value).upper()
+        if upper not in ("TRADES", "MIDPOINT", "BID", "ASK"):
+            return "TRADES"
+        return upper
+
+    def _subscribe_default_bars(self, account: str) -> None:
+        settings = self._get_ib_market_data_settings(account)
+        symbols = settings.get("default_symbols") or []
+        if not symbols:
+            return
+        if not isinstance(symbols, list):
+            symbols = [symbols]
+
+        gateway = self.main_engine.get_gateway(account)
+        if not gateway:
+            return
+
+        what_to_show = self._normalize_what_to_show(settings.get("what_to_show"))
+        use_rth = bool(settings.get("use_rth", False))
+
+        for symbol in symbols:
+            record = self.symbol_registry.get_by_canonical(symbol)
+            if not record or not record.ib_conid:
+                self.main_engine.write_log(
+                    f"IB bars default skipped: conId missing for {symbol}"
+                )
+                continue
+            req = SubscribeRequest(symbol=str(record.ib_conid), exchange=Exchange.SMART)
+            gateway.subscribe_bars(req, what_to_show=what_to_show, use_rth=use_rth)
 
     def _resolve_ib_conid(self, symbol: str) -> int:
         record = self.symbol_registry.get_by_canonical(symbol)
@@ -461,6 +550,8 @@ class JanusServer:
                 gateway = self.main_engine.get_gateway(acct_name)
                 if gateway:
                     self.trade_events_engine.register_gateway(gateway, acct_setting)
+            if broker_type == "ib":
+                self._subscribe_default_bars(acct_name)
 
         # 5. 启动 RPC 服务
         rpc_setting = self.config.get_rpc_setting()
