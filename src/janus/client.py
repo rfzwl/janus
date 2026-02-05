@@ -58,6 +58,19 @@ class JanusRpcClient(RpcClient):
             if pos.gateway_name == target_account and (pos.volume or 0) > 0
         ]
 
+    def fetch_bar_snapshots(self, account: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
+        target_account = account or self.default_account
+        remote = getattr(self, "get_bar_snapshots", None)
+        if not remote:
+            return {}
+        try:
+            result = remote(target_account)
+        except Exception:
+            return {}
+        if isinstance(result, dict):
+            return result
+        return {}
+
     def process_command(self, cmd: str, log_func: Callable):
         self.log_callback = log_func
         parts = cmd.split()

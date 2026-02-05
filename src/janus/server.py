@@ -58,6 +58,7 @@ class JanusServer:
         self.rpc_engine.server.register(self.harmony)
         self.rpc_engine.server.register(self.subscribe_bars)
         self.rpc_engine.server.register(self.unsubscribe_bars)
+        self.rpc_engine.server.register(self.get_bar_snapshots)
 
     def _init_symbol_registry(self) -> SymbolRegistry:
         try:
@@ -261,6 +262,19 @@ class JanusServer:
             f"IB bars unsubscribed: {', '.join(unsubscribed)} "
             f"(account {target_account}){routed}"
         )
+
+    def get_bar_snapshots(self, account: str) -> dict:
+        target_account = self._resolve_ib_account(account or "")
+        gateway = self.main_engine.get_gateway(target_account)
+        if not gateway:
+            raise ValueError(f"Gateway not found: {target_account}")
+
+        bar_cache = getattr(gateway, "bar_cache", {}) or {}
+        snapshots = {}
+        for symbol, payload in bar_cache.items():
+            if isinstance(payload, dict):
+                snapshots[symbol] = dict(payload)
+        return snapshots
 
     def _get_ib_market_data_settings(self, account: str) -> dict:
         for acct in self.config.get_all_accounts():

@@ -698,7 +698,13 @@ class IbAsyncApi:
         else:
             data_label = local_now.strftime("%H%M:%S")
         local_label = f"{local_now.strftime('%S')}.{local_now.microsecond // 1000:03d}"
-        self.gateway.write_log(f"BAR {symbol} {data_label} [{local_label}] close={close_display}")
+        self.gateway.on_log(
+            LogData(
+                msg=f"BAR {symbol} {data_label} [{local_label}] close={close_display}",
+                gateway_name=self.gateway_name,
+                level=DEBUG,
+            )
+        )
 
     def _ticker_to_tickdata(self, ticker: Ticker) -> Optional[TickData]:
         contract = ticker.contract

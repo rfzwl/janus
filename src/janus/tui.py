@@ -1,6 +1,6 @@
 from prompt_toolkit.application import Application
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout.containers import HSplit, Window, WindowAlign
+from prompt_toolkit.layout.containers import HSplit, VSplit, Window, WindowAlign
 from prompt_toolkit.layout.controls import FormattedTextControl, BufferControl
 from prompt_toolkit.layout.layout import Layout
 from prompt_toolkit.layout.dimension import Dimension
@@ -15,6 +15,8 @@ import io
 import queue
 
 from vnpy.trader.constant import Direction
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 class JanusTUI:
     def __init__(self, rpc_client, history_path: str = ".janus_history"):
@@ -66,12 +68,41 @@ class JanusTUI:
             title=self._positions_title_for(self.rpc_client.default_account),
         )
 
+        # Watch List (Subscribed Symbols Snapshot)
+        self.watch_control = FormattedTextControl(text=self.get_watchlist_text)
+        self.watch_window = Window(
+            content=self.watch_control,
+            height=Dimension(min=3, weight=1),
+            style="class:watch",
+        )
+        self.watch_frame = Frame(
+            self.watch_window,
+            title="Watch",
+            width=Dimension(weight=35),
+        )
+        self._watch_last_dt = None
+
+        self._bottom_spacer = Window(height=Dimension(weight=1))
+        self.input_frame = Frame(self.input_field, title="Input")
+        self.bottom_container = VSplit(
+            [
+                HSplit(
+                    [
+                        self._bottom_spacer,
+                        self.input_frame,
+                    ],
+                    width=Dimension(weight=65),
+                ),
+                self.watch_frame,
+            ],
+            height=Dimension(min=6, weight=2),
+        )
+
         # Layout
         self.root_container = HSplit([
             self.status_frame,
             self.positions_frame,
-            Frame(self.output_field, title="Logs"),
-            Frame(self.input_field, title="Input"),
+            self.bottom_container,
         ])
 
         self.layout = Layout(self.root_container)
@@ -227,6 +258,75 @@ class JanusTUI:
                 fmt(cost),
                 fmt(diluted_cost),
                 fmt(pos.pnl),
+            )
+
+        console.print(table)
+        return f.getvalue()
+
+    def get_watchlist_text(self):
+        """Generate watch list table from subscribed bar snapshots."""
+        f = io.StringIO()
+        console = Console(file=f, force_terminal=False, width=120)
+
+        table = Table(title=None, show_edge=False, box=None)
+        table.add_column("Symbol", style="magenta", no_wrap=True)
+        table.add_column("Close", justify="right")
+        table.add_column("VWAP", justify="right")
+        table.add_column("Volume", justify="right")
+
+        snapshots = self.rpc_client.fetch_bar_snapshots()
+        if not snapshots:
+            table.add_row("No data", "", "", "")
+            console.print(table)
+            return f.getvalue()
+
+        def fmt(value):
+            if value is None:
+                return "-"
+            try:
+                return f"{float(value):.2f}"
+            except (TypeError, ValueError):
+                return str(value)
+
+        def fmt_int(value):
+            if value is None:
+                return "-"
+            try:
+                return str(int(float(value)))
+            except (TypeError, ValueError):
+                return str(value)
+
+        latest_dt = None
+        for payload in snapshots.values():
+            value = payload.get("time")
+            if not isinstance(value, datetime):
+                continue
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+            try:
+                tz = ZoneInfo("America/Los_Angeles")
+                value = value.astimezone(tz)
+            except Exception:
+                pass
+            if latest_dt is None or value > latest_dt:
+                latest_dt = value
+
+        if latest_dt and (self._watch_last_dt is None or latest_dt > self._watch_last_dt):
+            self._watch_last_dt = latest_dt
+
+        if self._watch_last_dt:
+            title_time = self._watch_last_dt.strftime("%H%M:%S")
+            self.watch_frame.title = f"Watch[{title_time}]"
+        else:
+            self.watch_frame.title = "Watch"
+
+        for symbol in sorted(snapshots.keys()):
+            payload = snapshots.get(symbol) or {}
+            table.add_row(
+                symbol,
+                fmt(payload.get("close")),
+                fmt(payload.get("vwap")),
+                fmt_int(payload.get("volume")),
             )
 
         console.print(table)
