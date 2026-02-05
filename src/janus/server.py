@@ -197,18 +197,17 @@ class JanusServer:
         return self.main_engine.send_order(intent, gateway_name)
 
     def subscribe_bars(self, symbols: list[str] | str, account: str, rth: bool = False) -> str:
-        gateway = self.main_engine.get_gateway(account)
+        target_account = self._resolve_ib_account(account)
+        gateway = self.main_engine.get_gateway(target_account)
         if not gateway:
-            raise ValueError(f"Gateway not found: {account}")
-        if self.account_broker.get(account) != "ib":
-            raise ValueError(f"Bars subscription only supported for IB accounts: {account}")
+            raise ValueError(f"Gateway not found: {target_account}")
 
         if isinstance(symbols, str):
             symbols = [symbols]
         if not symbols:
             raise ValueError("No symbols provided for bar subscription")
 
-        market_settings = self._get_ib_market_data_settings(account)
+        market_settings = self._get_ib_market_data_settings(target_account)
         what_to_show = self._normalize_what_to_show(market_settings.get("what_to_show"))
         use_rth = bool(rth)
 
@@ -219,14 +218,17 @@ class JanusServer:
             gateway.subscribe_bars(req, what_to_show=what_to_show, use_rth=use_rth)
             subscribed.append(symbol)
 
-        return f"IB bars subscribed: {', '.join(subscribed)} (rth={use_rth})"
+        routed = f" (routed from {account})" if target_account != account else ""
+        return (
+            f"IB bars subscribed: {', '.join(subscribed)} "
+            f"(account {target_account}, rth={use_rth}){routed}"
+        )
 
     def unsubscribe_bars(self, symbols: list[str] | str, account: str) -> str:
-        gateway = self.main_engine.get_gateway(account)
+        target_account = self._resolve_ib_account(account)
+        gateway = self.main_engine.get_gateway(target_account)
         if not gateway:
-            raise ValueError(f"Gateway not found: {account}")
-        if self.account_broker.get(account) != "ib":
-            raise ValueError(f"Bars unsubscribe only supported for IB accounts: {account}")
+            raise ValueError(f"Gateway not found: {target_account}")
 
         if isinstance(symbols, str):
             symbols = [symbols]
@@ -240,7 +242,11 @@ class JanusServer:
             gateway.unsubscribe_bars(req)
             unsubscribed.append(symbol)
 
-        return f"IB bars unsubscribed: {', '.join(unsubscribed)}"
+        routed = f" (routed from {account})" if target_account != account else ""
+        return (
+            f"IB bars unsubscribed: {', '.join(unsubscribed)} "
+            f"(account {target_account}){routed}"
+        )
 
     def _get_ib_market_data_settings(self, account: str) -> dict:
         for acct in self.config.get_all_accounts():
@@ -248,6 +254,16 @@ class JanusServer:
                 setting = acct.get("ib_market_data") or {}
                 return setting if isinstance(setting, dict) else {}
         return {}
+
+    def _resolve_ib_account(self, account: str) -> str:
+        if self.account_broker.get(account) == "ib":
+            return account
+        for acct in self.config.get_all_accounts():
+            if acct.get("broker", "").lower() == "ib":
+                name = acct.get("name")
+                if name:
+                    return name
+        raise ValueError("No IB account configured for bars subscription")
 
     @staticmethod
     def _normalize_what_to_show(value: Any) -> str:

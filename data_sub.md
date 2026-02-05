@@ -11,6 +11,7 @@
 - `unsubscribe_bars(symbols: list[str], account: str) -> str`
 - Symbols are `canonical_symbol`.
 - Resolve conId via registry; if missing, attempt auto-lookup once and persist.
+- If `account` is not IB, route to the first configured IB account.
  
 ## Subscription Model (5s streaming bars)
 - Use IB real-time bars (5-second stream) instead of ticks.
