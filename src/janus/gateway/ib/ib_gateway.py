@@ -16,9 +16,11 @@ from ib_async.util import isNan
 from vnpy.event import Event
 from vnpy.trader.event import EVENT_TIMER
 from vnpy.trader.gateway import BaseGateway
+from vnpy.trader.logger import DEBUG
 from vnpy.trader.object import (
     AccountData,
     CancelRequest,
+    LogData,
     OrderData,
     OrderRequest,
     PositionData,
@@ -394,7 +396,11 @@ class IbAsyncApi:
     def _on_error(self, *args) -> None:
         try:
             req_id, code, msg, *_rest = args
-            self.gateway.write_log(f"IB error {code} (req {req_id}): {msg}")
+            text = f"IB error {code} (req {req_id}): {msg}"
+            if code in (2105, 2106):
+                self.gateway.on_log(LogData(msg=text, gateway_name=self.gateway_name, level=DEBUG))
+            else:
+                self.gateway.write_log(text)
         except Exception:
             self.gateway.write_log(f"IB error: {args}")
 
