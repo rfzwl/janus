@@ -190,7 +190,19 @@ class JanusServer:
 
         if broker == "webull":
             record = self.symbol_registry.ensure_webull_symbol(symbol)
-            intent["symbol"] = record.webull_ticker or record.canonical_symbol
+            canonical_symbol = record.canonical_symbol
+            intent["symbol"] = record.webull_ticker or canonical_symbol
+            if intent.get("direction") == Direction.SHORT:
+                long_volume = self._get_position_volume(
+                    gateway_name=gateway_name,
+                    symbol=canonical_symbol,
+                    direction=Direction.LONG,
+                )
+                if long_volume <= 0:
+                    raise ValueError(
+                        "Webull OpenAPI does not support short sells via API. "
+                        "No long position available to sell."
+                    )
         elif broker == "ib":
             conid = self._resolve_ib_conid(symbol)
             intent["symbol"] = str(conid)
@@ -200,6 +212,22 @@ class JanusServer:
                 intent["exchange"] = Exchange.SMART
 
         return self.main_engine.send_order(intent, gateway_name)
+
+    def _get_position_volume(
+        self,
+        gateway_name: str,
+        symbol: str,
+        direction: Direction,
+    ) -> float:
+        for position in self.main_engine.get_all_positions():
+            if position.gateway_name != gateway_name:
+                continue
+            if position.symbol != symbol:
+                continue
+            if position.direction != direction:
+                continue
+            return float(position.volume or 0)
+        return 0.0
 
     def cancel_order(self, vt_orderid: str) -> str:
         if not isinstance(vt_orderid, str) or not vt_orderid:
