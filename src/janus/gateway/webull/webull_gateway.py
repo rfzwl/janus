@@ -189,6 +189,8 @@ class WebullOfficialGateway(BaseGateway):
         elif req.type == OrderType.STOP:
             wb_order_type = "STOP_LOSS_LIMIT" if limit_price is not None else "STOP_LOSS"
 
+        time_in_force = "DAY" if req.type == OrderType.MARKET else "GTC"
+
         client_order_id = uuid.uuid4().hex
         params = {
             "client_order_id": client_order_id,
@@ -199,7 +201,7 @@ class WebullOfficialGateway(BaseGateway):
             "side": DIRECTION_VT2WB.get(req.direction, 'BUY'),
             "order_type": wb_order_type,
             "quantity": str(int(req.volume)),
-            "time_in_force": "GTC",
+            "time_in_force": time_in_force,
             "entrust_type": "QTY",
             "support_trading_session": "N",
         }
