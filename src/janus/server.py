@@ -7,7 +7,7 @@ from typing import Any
 from vnpy.event import EventEngine
 from vnpy.trader.engine import MainEngine
 from vnpy.trader.event import EVENT_LOG
-from vnpy.trader.object import LogData, SubscribeRequest
+from vnpy.trader.object import LogData, SubscribeRequest, CancelRequest
 from vnpy_rpcservice import RpcServiceApp
 
 from .gateway.webull.webull_gateway import WebullOfficialGateway
@@ -54,6 +54,7 @@ class JanusServer:
         self.rpc_engine.server.register(self.sync_all)
         self.rpc_engine.server.register(self.sync_gateway)
         self.rpc_engine.server.register(self.send_order)
+        self.rpc_engine.server.register(self.cancel_order)
         self.rpc_engine.server.register(self.harmony)
         self.rpc_engine.server.register(self.subscribe_bars)
         self.rpc_engine.server.register(self.unsubscribe_bars)
@@ -195,6 +196,16 @@ class JanusServer:
             intent["exchange"] = Exchange.SMART
 
         return self.main_engine.send_order(intent, gateway_name)
+
+    def cancel_order(self, vt_orderid: str) -> str:
+        if not isinstance(vt_orderid, str) or not vt_orderid:
+            raise ValueError("Cancel requires vt_orderid")
+        order = self.main_engine.get_order(vt_orderid)
+        if not order:
+            raise ValueError(f"Order not found: {vt_orderid}")
+        req = CancelRequest(orderid=order.orderid, symbol=order.symbol, exchange=order.exchange)
+        self.main_engine.cancel_order(req, order.gateway_name)
+        return f"Cancel request sent: {vt_orderid}"
 
     def subscribe_bars(self, symbols: list[str] | str, account: str, rth: bool = False) -> str:
         target_account = self._resolve_ib_account(account)
