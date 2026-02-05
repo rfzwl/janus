@@ -13,7 +13,7 @@ from webull.trade.trade_client import TradeClient
 from vnpy.trader.gateway import BaseGateway
 from vnpy.trader.object import (
     SubscribeRequest, OrderRequest, CancelRequest,
-    OrderData, AccountData, PositionData, TickData
+    OrderData, AccountData, PositionData, TickData, LogData
 )
 from vnpy.trader.constant import (
     Direction, Exchange, OrderType, Status
