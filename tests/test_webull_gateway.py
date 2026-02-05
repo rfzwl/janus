@@ -50,13 +50,22 @@ class FakeAccountV2:
 
 
 class FakeOrderV2:
-    def __init__(self, response):
+    def __init__(self, response, open_orders=None):
         self.response = response
+        self.open_orders = open_orders
         self.last_payload = None
+        self.last_cancel = None
 
     def place_order(self, account_id, new_orders):
         self.last_payload = {"account_id": account_id, "new_orders": new_orders}
         return self.response
+
+    def cancel_order(self, account_id, client_order_id):
+        self.last_cancel = (account_id, client_order_id)
+        return FakeResponse(200, {"data": {"client_order_id": client_order_id}})
+
+    def get_order_open(self, account_id, page_size=100):
+        return FakeResponse(200, self.open_orders or {"data": []})
 
 
 class FakeTrade:
@@ -72,9 +81,9 @@ class FakeTrade:
 
 
 class FakeTradeClient:
-    def __init__(self, account_list, balance, positions, order_response):
+    def __init__(self, account_list, balance, positions, order_response, open_orders=None):
         self.account_v2 = FakeAccountV2(account_list, balance, positions)
-        self.order_v2 = FakeOrderV2(order_response)
+        self.order_v2 = FakeOrderV2(order_response, open_orders=open_orders)
         self.trade = FakeTrade()
 
 
@@ -103,7 +112,14 @@ class WebullGatewayTests(unittest.TestCase):
     def setUp(self):
         self.event_engine = DummyEventEngine()
 
-    def _make_trade_client(self, account_list=None, balance=None, positions=None, order_response=None):
+    def _make_trade_client(
+        self,
+        account_list=None,
+        balance=None,
+        positions=None,
+        order_response=None,
+        open_orders=None,
+    ):
         if account_list is None:
             account_list = [{"account_id": "123"}]
         if balance is None:
@@ -112,7 +128,7 @@ class WebullGatewayTests(unittest.TestCase):
             positions = []
         if order_response is None:
             order_response = FakeResponse(200, {"data": [{"orderId": "999"}]})
-        return FakeTradeClient(account_list, balance, positions, order_response)
+        return FakeTradeClient(account_list, balance, positions, order_response, open_orders=open_orders)
 
     def test_connect_accepts_injected_trade_client(self):
         trade_client = self._make_trade_client()
@@ -166,6 +182,51 @@ class WebullGatewayTests(unittest.TestCase):
         self.assertEqual(payload["side"], "BUY")
         self.assertEqual(payload["order_type"], "LIMIT")
         self.assertEqual(payload["quantity"], "1")
+        self.assertEqual(payload["time_in_force"], "GTC")
+
+    def test_market_orders_use_day_tif(self):
+        trade_client = self._make_trade_client()
+        gateway = CapturingGateway(self.event_engine, trade_client=trade_client)
+        gateway.account_id = "123"
+
+        req = OrderRequest(
+            symbol="QQQ",
+            exchange=Exchange.SMART,
+            direction=Direction.LONG,
+            type=OrderType.MARKET,
+            volume=1,
+            price=0,
+            offset=Offset.OPEN,
+        )
+
+        gateway.send_order(req)
+        payload = trade_client.order_v2.last_payload["new_orders"][0]
+        self.assertEqual(payload["order_type"], "MARKET")
+        self.assertEqual(payload["time_in_force"], "DAY")
+
+    def test_cancel_order_uses_client_order_id(self):
+        open_orders = {
+            "data": [
+                {
+                    "order_id": "oid1",
+                    "client_order_id": "cid1",
+                    "symbol": "AAPL",
+                    "order_type": "LIMIT",
+                    "side": "BUY",
+                    "total_quantity": "1",
+                    "filled_quantity": "0",
+                    "limit_price": "10",
+                }
+            ]
+        }
+        trade_client = self._make_trade_client(open_orders=open_orders)
+        gateway = CapturingGateway(self.event_engine, trade_client=trade_client)
+        gateway.account_id = "123"
+
+        gateway.query_open_orders()
+        gateway.cancel_order(mock.Mock(orderid="oid1", symbol="AAPL", exchange=Exchange.SMART))
+
+        self.assertEqual(trade_client.order_v2.last_cancel, ("123", "cid1"))
 
     def test_query_account_emits_account_data(self):
         trade_client = self._make_trade_client()

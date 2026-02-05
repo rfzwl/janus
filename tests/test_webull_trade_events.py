@@ -6,7 +6,8 @@ sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
 
 from janus.gateway.webull.webull_gateway import WebullOfficialGateway
 from vnpy.event import EventEngine
-from vnpy.trader.constant import Direction, OrderType, Status
+from vnpy.trader.constant import Direction, Exchange, OrderType, Status
+from vnpy.trader.object import OrderData
 
 
 class FakeGateway(WebullOfficialGateway):
@@ -59,6 +60,39 @@ class WebullTradeEventsTests(unittest.TestCase):
         }
         self.gateway.handle_trade_event(0, 0, payload, None)
         self.assertEqual(len(self.gateway.orders), 0)
+
+    def test_trade_event_place_failed_marks_order_rejected(self):
+        order = OrderData(
+            orderid="oid1",
+            symbol="AAPL",
+            exchange=Exchange.SMART,
+            direction=Direction.LONG,
+            type=OrderType.LIMIT,
+            volume=1,
+            price=10,
+            status=Status.NOTTRADED,
+            gateway_name=self.gateway.gateway_name,
+        )
+        self.gateway._known_orders[order.orderid] = order
+
+        payload = {
+            "account_id": "acct1",
+            "client_order_id": "cid1",
+            "symbol": "AAPL",
+            "side": "BUY",
+            "quantity": "1",
+            "filled_qty": "0",
+            "order_type": "LIMIT",
+            "limit_price": "10",
+            "order_status": "FAILED",
+            "scene_type": "PLACE_FAILED",
+        }
+
+        self.gateway.handle_trade_event(0, 0, payload, None)
+
+        updated = self.gateway._known_orders["oid1"]
+        self.assertEqual(updated.status, Status.REJECTED)
+        self.assertFalse(updated.is_active())
 
 
 if __name__ == "__main__":
