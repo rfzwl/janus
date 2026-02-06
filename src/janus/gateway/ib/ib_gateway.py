@@ -451,6 +451,8 @@ class IbAsyncApi:
                 except Exception:
                     extra = ""
             text = f"IB error {code} (req {req_id}): {msg}{extra}"
+            if code == 2108:
+                return
             if code in (2105, 2106):
                 self.gateway.on_log(LogData(msg=text, gateway_name=self.gateway_name, level=DEBUG))
             else:
