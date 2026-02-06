@@ -164,7 +164,9 @@ class WebullOfficialGateway(BaseGateway):
         """
         发送订单 (适配 Webull V2 接口)
         """
+        webull_side = None
         if isinstance(req, dict):
+            webull_side = req.pop("webull_side", None)
             stop_price = req.pop("stop_price", None)
             limit_price = req.pop("limit_price", None)
             req = OrderRequest(**req)
@@ -199,7 +201,7 @@ class WebullOfficialGateway(BaseGateway):
             "symbol": req.symbol.upper(),
             "instrument_type": "EQUITY",
             "market": "US",
-            "side": DIRECTION_VT2WB.get(req.direction, 'BUY'),
+            "side": webull_side or DIRECTION_VT2WB.get(req.direction, 'BUY'),
             "order_type": wb_order_type,
             "quantity": str(int(req.volume)),
             "time_in_force": time_in_force,

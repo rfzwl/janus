@@ -199,10 +199,7 @@ class JanusServer:
                     direction=Direction.LONG,
                 )
                 if long_volume <= 0:
-                    raise ValueError(
-                        "Webull OpenAPI does not support short sells via API. "
-                        "No long position available to sell."
-                    )
+                    intent["webull_side"] = "SHORT"
         elif broker == "ib":
             conid = self._resolve_ib_conid(symbol)
             intent["symbol"] = str(conid)
