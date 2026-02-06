@@ -668,6 +668,20 @@ class WebullOfficialGateway(BaseGateway):
             data, "limit_price", "lmtPrice", "price"
         ))
         stop_price = self._safe_float(self._pick_value(data, "stop_price", "stopPrice"))
+        fill_price = self._safe_float(
+            self._pick_value(
+                data,
+                "filled_avg_price",
+                "filledAvgPrice",
+                "avg_price",
+                "avgPrice",
+                "filled_price",
+                "filledPrice",
+                "deal_price",
+                "dealPrice",
+                "price",
+            )
+        )
 
         price = 0.0
         if order_type == OrderType.LIMIT:
@@ -778,6 +792,8 @@ class WebullOfficialGateway(BaseGateway):
             order.volume = total or order.volume
             order.traded = traded or order.traded
             order.status = status
+        if fill_price:
+            order.filled_price = fill_price
 
         self._known_orders[str(order_id)] = order
         self.on_order(copy(order))

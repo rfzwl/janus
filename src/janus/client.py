@@ -3,7 +3,7 @@ import sys
 from typing import List, Dict, Callable, Any, Optional
 
 from vnpy.rpc import RpcClient
-from vnpy.trader.object import OrderData, PositionData, SubscribeRequest
+from vnpy.trader.object import OrderData, PositionData, SubscribeRequest, TradeData
 from vnpy.trader.constant import Direction, Exchange, OrderType, Offset, Status
 
 from .tui import JanusTUI
@@ -17,6 +17,7 @@ class JanusRpcClient(RpcClient):
         self.default_account = self._resolve_default_account()
         self.orders: Dict[str, OrderData] = {}
         self.positions: Dict[str, PositionData] = {}
+        self._orders_with_trade: set[str] = set()
         self.log_callback: Callable[[str], None] = lambda x: print(x) 
         self.tui = None
 
@@ -30,10 +31,10 @@ class JanusRpcClient(RpcClient):
 
         match event_type:
             case t if t.startswith("eOrder"):
-                if payload.is_active():
-                    self.orders[payload.vt_orderid] = payload
-                elif payload.vt_orderid in self.orders:
-                    self.orders[payload.vt_orderid] = payload
+                prev = self.orders.get(payload.vt_orderid)
+                prev_status = prev.status if prev else None
+                self.orders[payload.vt_orderid] = payload
+                self._log_order_update(payload, prev_status)
                 
                 if self.tui and self.tui.app.is_running:
                     self.tui.app.invalidate()
@@ -41,11 +42,102 @@ class JanusRpcClient(RpcClient):
                 self.positions[payload.vt_positionid] = payload
                 if self.tui and self.tui.app.is_running:
                     self.tui.app.invalidate()
-                    
+
+            case t if t.startswith("eTrade"):
+                self._log_trade_update(payload)
+
             case "eLog":
-                if self.tui:
+                if self.tui and self._should_show_log(payload):
                     gateway = getattr(payload, "gateway_name", "") or "Server"
                     self.tui.log(f"[Server][{gateway}] {payload.msg}")
+
+    @staticmethod
+    def _should_show_log(payload) -> bool:
+        level = getattr(payload, "level", None)
+        if level is None:
+            return False
+        try:
+            return level >= 30  # WARNING+
+        except Exception:
+            return False
+
+    def _log_order_update(self, order: OrderData, prev_status: Optional[Status]) -> None:
+        status = order.status
+        if prev_status == status:
+            return
+        if status in (Status.SUBMITTING, Status.NOTTRADED) and prev_status is None:
+            message = f"{self._format_order_command(order)} placed"
+        elif status == Status.ALLTRADED:
+            if order.vt_orderid in self._orders_with_trade:
+                return
+            filled_price = getattr(order, "filled_price", None)
+            price_text = self._fmt_number(filled_price)
+            message = f"{self._format_order_command(order)} filled {price_text}"
+        elif status == Status.CANCELLED:
+            message = f"{self._format_order_command(order)} canceled"
+        elif status == Status.REJECTED:
+            message = f"{self._format_order_command(order)} rejected"
+        else:
+            return
+
+        if self.tui and self.tui.app:
+            self.tui.log(message)
+        else:
+            self.log_callback(message)
+
+    def _log_trade_update(self, trade: TradeData) -> None:
+        vt_orderid = f"{trade.gateway_name}.{trade.orderid}"
+        self._orders_with_trade.add(vt_orderid)
+        order = self.orders.get(vt_orderid)
+        if order:
+            command = self._format_order_command(order)
+        else:
+            command = self._format_trade_command(trade)
+        price = self._fmt_number(trade.price)
+        message = f"{command} filled {price}"
+        if self.tui and self.tui.app:
+            self.tui.log(message)
+        else:
+            self.log_callback(message)
+
+    @staticmethod
+    def _fmt_number(value: Any) -> str:
+        if value is None:
+            return "-"
+        try:
+            num = float(value)
+        except (TypeError, ValueError):
+            return str(value)
+        if num.is_integer():
+            return str(int(num))
+        return f"{num:.6f}".rstrip("0").rstrip(".")
+
+    @staticmethod
+    def _format_order_command(order: OrderData) -> str:
+        symbol = order.symbol or "-"
+        volume = JanusRpcClient._fmt_number(order.volume)
+        price = JanusRpcClient._fmt_number(order.price)
+        direction = order.direction
+        order_type = order.type
+
+        if order_type == OrderType.STOP:
+            action = "bstop" if direction == Direction.LONG else "sstop"
+            return f"{action} {symbol} {volume} {price}"
+
+        action = "buy" if direction == Direction.LONG else "sell"
+        if order_type == OrderType.MARKET:
+            return f"{action} {symbol} market {volume}"
+        if order_type == OrderType.LIMIT:
+            return f"{action} {symbol} limit {volume} {price}"
+        return f"{action} {symbol} {order_type.name.lower()} {volume} {price}"
+
+    @staticmethod
+    def _format_trade_command(trade: TradeData) -> str:
+        symbol = trade.symbol or "-"
+        volume = trade.volume if trade.volume is not None else "-"
+        direction = trade.direction
+        action = "buy" if direction == Direction.LONG else "sell"
+        return f"{action} {symbol} {volume}"
 
     def get_open_orders(self, account: Optional[str] = None) -> List[OrderData]:
         target_account = account or self.default_account
@@ -270,7 +362,6 @@ class JanusRpcClient(RpcClient):
 
             account = account_override or self.default_account
             order_id = self.send_order(req, account)
-            self.log_callback(f"Order sent: {order_id} (account {account})")
         except Exception as e:
             self.log_callback(f"Order Error: {e}")
 
