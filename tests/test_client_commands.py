@@ -9,7 +9,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
 from janus.client import JanusRpcClient
 from janus.tui import JanusTUI
 from vnpy.event import Event
-from vnpy.trader.constant import Direction, Exchange, OrderType
+from vnpy.trader.constant import Direction, Exchange, OrderType, Status
 from vnpy.trader.object import OrderData, PositionData
 
 
@@ -239,6 +239,49 @@ class ClientCommandTests(unittest.TestCase):
         price, aux = JanusTUI._format_order_prices(order)
         self.assertEqual(price, "102.0")
         self.assertEqual(aux, "102.5")
+
+    def test_alltraded_without_fill_price_does_not_log_filled(self):
+        client = CapturingClient()
+        logs = []
+        client.log_callback = logs.append
+
+        order = OrderData(
+            symbol="QQQ",
+            exchange=Exchange.SMART,
+            orderid="order1",
+            direction=Direction.LONG,
+            type=OrderType.STOP,
+            volume=1,
+            price=500,
+            status=Status.ALLTRADED,
+            gateway_name="acct1",
+        )
+        order.filled_price = ""
+
+        client._log_order_update(order, prev_status=None)
+        self.assertEqual(logs, [])
+
+    def test_alltraded_with_fill_price_logs_filled(self):
+        client = CapturingClient()
+        logs = []
+        client.log_callback = logs.append
+
+        order = OrderData(
+            symbol="QQQ",
+            exchange=Exchange.SMART,
+            orderid="order1",
+            direction=Direction.LONG,
+            type=OrderType.STOP,
+            volume=1,
+            price=500,
+            status=Status.ALLTRADED,
+            gateway_name="acct1",
+        )
+        order.filled_price = 501.25
+
+        client._log_order_update(order, prev_status=None)
+        self.assertEqual(len(logs), 1)
+        self.assertIn("filled 501.25", logs[0])
 
 
 if __name__ == "__main__":

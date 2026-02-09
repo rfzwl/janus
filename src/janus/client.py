@@ -71,7 +71,11 @@ class JanusRpcClient(RpcClient):
             if order.vt_orderid in self._orders_with_trade:
                 return
             filled_price = getattr(order, "filled_price", None)
+            if self._is_missing_fill_price(filled_price):
+                return
             price_text = self._fmt_number(filled_price)
+            if not price_text or price_text == "-":
+                return
             message = f"{self._format_order_command(order)} filled {price_text}"
         elif status == Status.CANCELLED:
             message = f"{self._format_order_command(order)} canceled"
@@ -111,6 +115,17 @@ class JanusRpcClient(RpcClient):
         if num.is_integer():
             return str(int(num))
         return f"{num:.6f}".rstrip("0").rstrip(".")
+
+    @staticmethod
+    def _is_missing_fill_price(value: Any) -> bool:
+        if value is None:
+            return True
+        if isinstance(value, str):
+            return not value.strip()
+        try:
+            return bool(value != value)  # NaN check
+        except Exception:
+            return False
 
     @staticmethod
     def _format_order_command(order: OrderData) -> str:
