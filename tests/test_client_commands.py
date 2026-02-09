@@ -9,7 +9,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
 from janus.client import JanusRpcClient
 from janus.tui import JanusTUI
 from vnpy.event import Event
-from vnpy.trader.constant import Direction, Exchange
+from vnpy.trader.constant import Direction, Exchange, OrderType
 from vnpy.trader.object import OrderData, PositionData
 
 
@@ -208,6 +208,37 @@ class ClientCommandTests(unittest.TestCase):
         logs = []
         client.process_command("harmony", logs.append)
         self.assertEqual(client.harmony_calls, 1)
+
+    def test_open_order_prices_for_stop_market(self):
+        order = OrderData(
+            symbol="AAPL",
+            exchange=Exchange.SMART,
+            orderid="order1",
+            direction=Direction.LONG,
+            type=OrderType.STOP,
+            price=102.5,
+            gateway_name="acct1",
+        )
+
+        price, aux = JanusTUI._format_order_prices(order)
+        self.assertEqual(price, "-")
+        self.assertEqual(aux, "102.5")
+
+    def test_open_order_prices_for_stop_limit(self):
+        order = OrderData(
+            symbol="AAPL",
+            exchange=Exchange.SMART,
+            orderid="order1",
+            direction=Direction.LONG,
+            type=OrderType.STOP,
+            price=102.5,
+            gateway_name="acct1",
+        )
+        order.extra = {"aux_price": 102.5, "limit_price": 102.0}
+
+        price, aux = JanusTUI._format_order_prices(order)
+        self.assertEqual(price, "102.0")
+        self.assertEqual(aux, "102.5")
 
 
 if __name__ == "__main__":

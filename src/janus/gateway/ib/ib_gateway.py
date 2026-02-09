@@ -257,6 +257,16 @@ class IbAsyncApi:
 
         order = req.create_order_data(str(orderid), self.gateway_name)
         order.status = Status.SUBMITTING
+        order.extra = {}
+        if req.type == OrderType.STOP:
+            if stop_price is not None:
+                order.extra["aux_price"] = float(stop_price)
+                order.extra["stop_price"] = float(stop_price)
+            if limit_price is not None:
+                order.extra["limit_price"] = float(limit_price)
+                order.extra["ib_order_type"] = "STP LMT"
+            else:
+                order.extra["ib_order_type"] = "STP"
         self.gateway.on_order(order)
         return order.vt_orderid
 
@@ -464,6 +474,7 @@ class IbAsyncApi:
         order = trade.order
         contract = trade.contract
         status = trade.orderStatus.status
+        ib_order_type = getattr(order, "orderType", "") or ""
 
         exchange = self._exchange_from_contract(contract)
         symbol = self._symbol_from_contract(contract)
@@ -482,6 +493,13 @@ class IbAsyncApi:
             data.price = float(order.lmtPrice or 0)
         elif data.type == OrderType.STOP:
             data.price = float(order.auxPrice or 0)
+            data.extra = {
+                "aux_price": float(order.auxPrice or 0),
+                "stop_price": float(order.auxPrice or 0),
+                "ib_order_type": ib_order_type or "STP",
+            }
+            if ib_order_type == "STP LMT":
+                data.extra["limit_price"] = float(order.lmtPrice or 0)
 
         data.traded = float(getattr(trade.orderStatus, "filled", 0) or 0)
         data.status = STATUS_IB2VT.get(status, Status.SUBMITTING)

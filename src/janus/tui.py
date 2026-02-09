@@ -195,25 +195,43 @@ class JanusTUI:
         table.add_column("Symbol", style="magenta")
         table.add_column("Direction", style="green")
         table.add_column("Price", justify="right")
+        table.add_column("Aux", justify="right")
         table.add_column("Volume", justify="right")
         table.add_column("Status", style="yellow")
 
         orders = self.rpc_client.get_open_orders()
         if not orders:
-            table.add_row("No open orders", "", "", "", "", "")
+            table.add_row("No open orders", "", "", "", "", "", "")
         for order in orders:
             direction = order.direction.name if order.direction else "-"
+            price_text, aux_text = self._format_order_prices(order)
             table.add_row(
                 order.vt_orderid,
                 order.symbol,
                 direction,
-                str(order.price),
+                price_text,
+                aux_text,
                 f"{order.traded}/{order.volume}",
                 order.status.name
             )
         
         console.print(table)
         return f.getvalue()
+
+    @staticmethod
+    def _format_order_prices(order):
+        """Return (price, aux) display text for open-order table."""
+        extra = getattr(order, "extra", None) or {}
+        limit_price = extra.get("limit_price")
+        aux_price = extra.get("aux_price", extra.get("stop_price"))
+
+        order_type = getattr(order, "type", None)
+        if getattr(order_type, "name", "") == "STOP":
+            if limit_price is not None:
+                return str(limit_price), str(aux_price if aux_price is not None else order.price)
+            return "-", str(aux_price if aux_price is not None else order.price)
+
+        return str(order.price), str(aux_price) if aux_price is not None else "-"
 
     def get_positions_text(self):
         """Generate Rich Table string for positions"""
