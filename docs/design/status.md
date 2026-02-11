@@ -47,6 +47,7 @@ Server-only RPC; client triggers and shows summary.
 ## Current Commands
 - Client: `sync`, `harmony`, `bars`, `unbars` (RPC to server).
 - Server: `send_order_intent` routes per broker via registry.
+- `download initial` currently runs synchronously in the server RPC path; asynchronous job-based execution is the planned future direction.
 
 ## Open Items / Phase 4
 Goal: support order types: market, limit, stop, stop-limit.

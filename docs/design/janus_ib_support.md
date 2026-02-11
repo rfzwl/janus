@@ -119,6 +119,12 @@ Fields:
 - Janus server should keep all heavy work (symbol mapping, order parsing) outside gateway callbacks.
 - Market data derived refresh should be debounced (e.g., 200-500ms) to avoid UI storms.
 
+## Historical Download Execution Model
+- Current state: `download initial` is executed synchronously in the server RPC path.
+- Practical impact: long-running downloads can hold a request for an extended period and temporarily reduce responsiveness for other interactive RPC operations.
+- Target direction: move historical download to an asynchronous job model on the server side (submit -> `job_id` -> status/progress/cancel) while keeping chunked database commits and IB pacing controls.
+- Scope note: this refactor is planned for a later phase; current implementation remains synchronous for simplicity and operational stability.
+
 ## Risks / Edge Cases
 - Symbol ambiguity (same ticker on different exchanges).
 - Short sale constraints differ by broker; need config rules.

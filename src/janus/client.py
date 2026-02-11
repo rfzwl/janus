@@ -1,5 +1,6 @@
 import threading
 import sys
+import time
 from typing import List, Dict, Callable, Any, Optional
 
 from vnpy.rpc import RpcClient
@@ -10,6 +11,9 @@ from .tui import JanusTUI
 from .config import ConfigLoader
 
 class JanusRpcClient(RpcClient):
+    DOWNLOAD_INITIAL_TIMEOUT_MS: int = 30 * 60 * 1000
+    DISCONNECT_WARNING_INTERVAL_SEC: int = 30
+
     def __init__(self):
         super().__init__()
         self.config = ConfigLoader()
@@ -18,8 +22,25 @@ class JanusRpcClient(RpcClient):
         self.orders: Dict[str, OrderData] = {}
         self.positions: Dict[str, PositionData] = {}
         self._orders_with_trade: set[str] = set()
+        self._suppress_disconnect_warning: bool = False
+        self._last_disconnect_warning_ts: float = 0.0
         self.log_callback: Callable[[str], None] = lambda x: print(x) 
         self.tui = None
+
+    def on_disconnected(self) -> None:
+        if self._suppress_disconnect_warning:
+            return
+
+        now = time.time()
+        if now - self._last_disconnect_warning_ts < self.DISCONNECT_WARNING_INTERVAL_SEC:
+            return
+        self._last_disconnect_warning_ts = now
+
+        msg = "RpcServer has no response over 30 seconds, please check your connection."
+        if self.tui and self.tui.app:
+            self.tui.log(msg)
+        else:
+            self.log_callback(msg)
 
     def callback(self, topic: str, data: Any):
         """Standard vnpy RPC callback"""
@@ -275,7 +296,7 @@ class JanusRpcClient(RpcClient):
             "  harmony                 Fill missing symbol mappings (server-side)",
             "  bars <symbol> [rth]     Subscribe to 5s IB bars (default all-hours)",
             "  unbars <symbol>         Unsubscribe from 5s IB bars",
-            "  download initial <symbol> <interval> [replace]",
+            "  download initial <symbol> <interval> [replace] [adjusted]",
             "  help [command]",
             "  exit|quit",
             "",
@@ -304,7 +325,7 @@ class JanusRpcClient(RpcClient):
             "harmony": "Usage: harmony  (fill missing symbol mappings)",
             "bars": "Usage: bars <symbol> [rth]  (subscribe to 5s bars)",
             "unbars": "Usage: unbars <symbol>  (unsubscribe from 5s bars)",
-            "download": "Usage: download initial <symbol> <interval> [replace]",
+            "download": "Usage: download initial <symbol> <interval> [replace] [adjusted]",
             "help": "Usage: help [command]",
             "exit": "Usage: exit  (stop remote server and quit)",
             "quit": "Usage: quit  (quit client)",
@@ -427,18 +448,23 @@ class JanusRpcClient(RpcClient):
         account_override: Optional[str] = None,
     ) -> None:
         if len(parts) < 4 or parts[1].lower() != "initial":
-            log_func("Usage: download initial <symbol> <interval> [replace]")
+            log_func("Usage: download initial <symbol> <interval> [replace] [adjusted]")
             return
 
         symbol = parts[2]
         interval = parts[3]
         replace = False
-        if len(parts) >= 5:
-            if parts[4].lower() == "replace":
+        adjusted = False
+        for token in parts[4:]:
+            text = token.lower()
+            if text == "replace":
                 replace = True
-            else:
-                log_func("Usage: download initial <symbol> <interval> [replace]")
-                return
+                continue
+            if text == "adjusted":
+                adjusted = True
+                continue
+            log_func("Usage: download initial <symbol> <interval> [replace] [adjusted]")
+            return
 
         account = account_override or self.default_account
         self.request_download_initial(
@@ -446,6 +472,7 @@ class JanusRpcClient(RpcClient):
             interval=interval,
             account=account,
             replace=replace,
+            adjusted=adjusted,
             log_func=log_func,
         )
 
@@ -538,6 +565,7 @@ class JanusRpcClient(RpcClient):
         interval: str,
         account: Optional[str] = None,
         replace: bool = False,
+        adjusted: bool = False,
         log_func: Optional[Callable[[str], None]] = None,
     ) -> None:
         logger = log_func or self.log_callback or print
@@ -548,12 +576,45 @@ class JanusRpcClient(RpcClient):
             logger("Download initial not available on server.")
             return
         target_account = account or self.default_account
+        self._suppress_disconnect_warning = True
         try:
-            res = remote(symbol, interval, target_account, replace)
+            res = remote(
+                symbol,
+                interval,
+                target_account,
+                replace,
+                adjusted,
+                timeout=self.DOWNLOAD_INITIAL_TIMEOUT_MS,
+            )
             if res is not None:
                 logger(str(res))
         except Exception as e:
+            # Backward-compatible fallback for server versions that still use
+            # download_initial(symbol, interval, account, replace).
+            if "positional arguments but 6 were given" in str(e):
+                if not adjusted:
+                    logger(
+                        "Download initial failed: server is outdated for default TRADES mode. "
+                        "Please restart server to use non-adjusted download."
+                    )
+                    return
+                try:
+                    res = remote(
+                        symbol,
+                        interval,
+                        target_account,
+                        replace,
+                        timeout=self.DOWNLOAD_INITIAL_TIMEOUT_MS,
+                    )
+                    if res is not None:
+                        logger(str(res))
+                    return
+                except Exception as fallback_exc:
+                    logger(f"Download initial failed: {fallback_exc}")
+                    return
             logger(f"Download initial failed: {e}")
+        finally:
+            self._suppress_disconnect_warning = False
 
     def _refresh_snapshot(self, account: str, logger: Callable[[str], None]):
         try:

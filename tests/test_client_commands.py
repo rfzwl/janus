@@ -120,6 +120,7 @@ class DownloadCapturingClient(JanusRpcClient):
         interval,
         account=None,
         replace=False,
+        adjusted=False,
         log_func=None,
     ):
         self.download_calls.append(
@@ -128,8 +129,35 @@ class DownloadCapturingClient(JanusRpcClient):
                 "interval": interval,
                 "account": account,
                 "replace": replace,
+                "adjusted": adjusted,
             }
         )
+
+
+class DownloadFallbackClient(JanusRpcClient):
+    def __init__(self):
+        super().__init__()
+        self._socket_req = object()
+        self.calls = []
+
+    def download_initial(self, *args, **kwargs):
+        self.calls.append(args)
+        if len(args) == 5:
+            raise RuntimeError(
+                "TypeError: JanusServer.download_initial() takes from 4 to 5 positional arguments but 6 were given"
+            )
+        return "ok-fallback"
+
+
+class DownloadTimeoutClient(JanusRpcClient):
+    def __init__(self):
+        super().__init__()
+        self._socket_req = object()
+        self.calls = []
+
+    def download_initial(self, *args, **kwargs):
+        self.calls.append({"args": args, "kwargs": kwargs})
+        return "ok-timeout"
 
 
 class ClientCommandTests(unittest.TestCase):
@@ -244,6 +272,7 @@ class ClientCommandTests(unittest.TestCase):
         self.assertEqual(call["interval"], "1")
         self.assertEqual(call["account"], "acct1")
         self.assertFalse(call["replace"])
+        self.assertFalse(call["adjusted"])
 
     def test_download_initial_command_with_replace(self):
         client = DownloadCapturingClient()
@@ -253,6 +282,27 @@ class ClientCommandTests(unittest.TestCase):
 
         self.assertEqual(len(client.download_calls), 1)
         self.assertTrue(client.download_calls[0]["replace"])
+        self.assertFalse(client.download_calls[0]["adjusted"])
+
+    def test_download_initial_command_with_adjusted(self):
+        client = DownloadCapturingClient()
+        logs = []
+
+        client.process_command("download initial qqq 1 adjusted", logs.append)
+
+        self.assertEqual(len(client.download_calls), 1)
+        self.assertFalse(client.download_calls[0]["replace"])
+        self.assertTrue(client.download_calls[0]["adjusted"])
+
+    def test_download_initial_command_with_replace_and_adjusted(self):
+        client = DownloadCapturingClient()
+        logs = []
+
+        client.process_command("download initial qqq 1 replace adjusted", logs.append)
+
+        self.assertEqual(len(client.download_calls), 1)
+        self.assertTrue(client.download_calls[0]["replace"])
+        self.assertTrue(client.download_calls[0]["adjusted"])
 
     def test_download_initial_account_override(self):
         client = DownloadCapturingClient()
@@ -262,6 +312,8 @@ class ClientCommandTests(unittest.TestCase):
 
         self.assertEqual(len(client.download_calls), 1)
         self.assertEqual(client.download_calls[0]["account"], "acct2")
+        self.assertTrue(client.download_calls[0]["replace"])
+        self.assertFalse(client.download_calls[0]["adjusted"])
 
     def test_download_initial_usage_error(self):
         client = DownloadCapturingClient()
@@ -271,6 +323,82 @@ class ClientCommandTests(unittest.TestCase):
 
         self.assertEqual(len(client.download_calls), 0)
         self.assertTrue(any("Usage: download initial" in msg for msg in logs))
+
+    def test_download_initial_falls_back_to_legacy_server_signature_for_adjusted(self):
+        client = DownloadFallbackClient()
+        logs = []
+
+        client.request_download_initial(
+            symbol="QQQ",
+            interval="1",
+            account="acct1",
+            replace=False,
+            adjusted=True,
+            log_func=logs.append,
+        )
+
+        self.assertEqual(len(client.calls), 2)
+        self.assertEqual(len(client.calls[0]), 5)
+        self.assertEqual(len(client.calls[1]), 4)
+        self.assertIn("ok-fallback", logs[0])
+
+    def test_download_initial_requires_server_restart_for_default_trades_mode(self):
+        client = DownloadFallbackClient()
+        logs = []
+
+        client.request_download_initial(
+            symbol="QQQ",
+            interval="1",
+            account="acct1",
+            replace=False,
+            adjusted=False,
+            log_func=logs.append,
+        )
+
+        self.assertEqual(len(client.calls), 1)
+        self.assertIn("server is outdated", logs[0])
+
+    def test_download_initial_uses_extended_rpc_timeout(self):
+        client = DownloadTimeoutClient()
+        logs = []
+
+        client.request_download_initial(
+            symbol="QQQ",
+            interval="1",
+            account="acct1",
+            replace=False,
+            adjusted=False,
+            log_func=logs.append,
+        )
+
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(
+            client.calls[0]["kwargs"].get("timeout"),
+            JanusRpcClient.DOWNLOAD_INITIAL_TIMEOUT_MS,
+        )
+        self.assertFalse(client._suppress_disconnect_warning)
+        self.assertIn("ok-timeout", logs[0])
+
+    def test_on_disconnected_message_uses_your(self):
+        client = CapturingClient()
+        logs = []
+        client.log_callback = logs.append
+
+        client.on_disconnected()
+
+        self.assertEqual(len(logs), 1)
+        self.assertIn("check your connection", logs[0])
+        self.assertNotIn("check you connection", logs[0])
+
+    def test_on_disconnected_suppressed_during_long_rpc(self):
+        client = CapturingClient()
+        logs = []
+        client.log_callback = logs.append
+        client._suppress_disconnect_warning = True
+
+        client.on_disconnected()
+
+        self.assertEqual(logs, [])
 
     def test_open_order_prices_for_stop_market(self):
         order = OrderData(
