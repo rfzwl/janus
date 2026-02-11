@@ -1,9 +1,13 @@
 import sys
 import logging
 import argparse
+import time
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 from threading import Event
 from typing import Any
 
+import psycopg
 from vnpy.event import EventEngine
 from vnpy.trader.engine import MainEngine
 from vnpy.trader.event import EVENT_LOG
@@ -59,6 +63,7 @@ class JanusServer:
         self.rpc_engine.server.register(self.subscribe_bars)
         self.rpc_engine.server.register(self.unsubscribe_bars)
         self.rpc_engine.server.register(self.get_bar_snapshots)
+        self.rpc_engine.server.register(self.download_initial)
 
     def _init_symbol_registry(self) -> SymbolRegistry:
         try:
@@ -300,6 +305,299 @@ class JanusServer:
             if isinstance(payload, dict):
                 snapshots[symbol] = dict(payload)
         return snapshots
+
+    def download_initial(
+        self,
+        symbol: str,
+        interval: str,
+        account: str,
+        replace: bool = False,
+    ) -> str:
+        canonical = self.symbol_registry.normalize(symbol or "")
+        if not canonical:
+            raise ValueError("download initial requires symbol")
+
+        normalized_interval = self._normalize_download_interval(interval)
+        if normalized_interval != "1m":
+            raise ValueError(
+                f"interval {interval} not supported yet, only 1m is enabled now"
+            )
+
+        target_account = self._resolve_ib_account(account or "")
+        gateway = self.main_engine.get_gateway(target_account)
+        if not gateway:
+            raise ValueError(f"Gateway not found: {target_account}")
+        api = getattr(gateway, "api", None)
+        if not api or not getattr(api, "status", False):
+            raise ValueError(f"IB gateway not connected: {target_account}")
+
+        conid = self._resolve_ib_conid(canonical)
+        req = SubscribeRequest(symbol=str(conid), exchange=Exchange.SMART)
+
+        what_to_show = "ADJUSTED_LAST"
+        use_rth = False
+        duration = "10 D"
+        bar_size = "1 min"
+        retries = 2
+
+        head_ts = gateway.request_head_timestamp(
+            req,
+            what_to_show=what_to_show,
+            use_rth=use_rth,
+        )
+        head_ts_utc = self._to_utc_ts(head_ts)
+
+        progress_lines: list[str] = []
+        total_rows = 0
+        chunk_count = 0
+        current_end: datetime | None = None
+        previous_earliest: datetime | None = None
+
+        try:
+            with self._db_connect() as conn:
+                symbol_id = self._get_symbol_registry_id(conn, canonical)
+                if symbol_id is None:
+                    raise ValueError(f"symbol not found in registry: {canonical}")
+
+                has_data = self._ohlc_1min_has_data(conn, symbol_id)
+                if has_data and not replace:
+                    raise ValueError(
+                        f"existing 1m data found for {canonical}; "
+                        "rerun with replace to overwrite"
+                    )
+                if replace and has_data:
+                    deleted = self._delete_ohlc_1min(conn, symbol_id)
+                    conn.commit()
+                    progress_lines.append(f"replace: deleted {deleted} existing rows")
+
+                while True:
+                    bars = None
+                    for attempt in range(retries + 1):
+                        try:
+                            bars = gateway.request_historical_bars(
+                                req=req,
+                                end_datetime=current_end,
+                                duration=duration,
+                                bar_size=bar_size,
+                                what_to_show=what_to_show,
+                                use_rth=use_rth,
+                            )
+                            break
+                        except Exception as exc:
+                            if attempt >= retries:
+                                raise RuntimeError(
+                                    "IB historical request failed "
+                                    f"(symbol={canonical}, interval=1m, "
+                                    f"whatToShow={what_to_show}, useRTH={use_rth}, "
+                                    f"duration={duration}, barSize={bar_size}, "
+                                    f"end={current_end}): {exc}"
+                                ) from exc
+                            backoff = 2 ** attempt
+                            progress_lines.append(
+                                f"chunk {chunk_count + 1} retry {attempt + 1}/{retries} "
+                                f"after error: {exc}; backoff={backoff}s"
+                            )
+                            time.sleep(backoff)
+
+                    if not bars:
+                        if chunk_count == 0:
+                            raise RuntimeError(
+                                "IB returned no bars for request "
+                                f"(symbol={canonical}, interval=1m, whatToShow={what_to_show}, "
+                                f"useRTH={use_rth}, duration={duration}, end={current_end})."
+                            )
+                        progress_lines.append(f"chunk {chunk_count + 1}: no bars returned, stop.")
+                        break
+
+                    rows = []
+                    earliest: datetime | None = None
+                    latest: datetime | None = None
+                    for bar in bars:
+                        ts = self._to_utc_ts(getattr(bar, "date", None))
+                        if not ts:
+                            continue
+                        earliest = ts if earliest is None or ts < earliest else earliest
+                        latest = ts if latest is None or ts > latest else latest
+                        rows.append(
+                            (
+                                symbol_id,
+                                ts,
+                                self._to_numeric8(getattr(bar, "open", 0)),
+                                self._to_numeric8(getattr(bar, "high", 0)),
+                                self._to_numeric8(getattr(bar, "low", 0)),
+                                self._to_numeric8(getattr(bar, "close", 0)),
+                                self._to_volume_int(getattr(bar, "volume", 0)),
+                                self._to_numeric8(getattr(bar, "average", 0)),
+                                "ib_adjusted_last",
+                            )
+                        )
+
+                    if not rows:
+                        if chunk_count == 0:
+                            raise RuntimeError(
+                                "IB returned bars without usable timestamps "
+                                f"(symbol={canonical}, end={current_end})."
+                            )
+                        progress_lines.append(
+                            f"chunk {chunk_count + 1}: no usable bars after parsing, stop."
+                        )
+                        break
+
+                    self._upsert_ohlc_1min(conn, rows)
+                    conn.commit()
+
+                    chunk_count += 1
+                    total_rows += len(rows)
+                    progress_lines.append(
+                        f"chunk {chunk_count}: rows={len(rows)} "
+                        f"range={self._fmt_ts(earliest)} -> {self._fmt_ts(latest)}"
+                    )
+
+                    if head_ts_utc and earliest and earliest <= head_ts_utc:
+                        progress_lines.append(
+                            f"reached head timestamp: {self._fmt_ts(head_ts_utc)}"
+                        )
+                        break
+
+                    if previous_earliest and earliest and earliest >= previous_earliest:
+                        progress_lines.append(
+                            "stop guard: earliest timestamp did not move backward"
+                        )
+                        break
+
+                    previous_earliest = earliest
+                    if not earliest:
+                        break
+                    current_end = earliest - timedelta(seconds=1)
+        except psycopg.errors.UndefinedTable as exc:
+            raise RuntimeError(
+                "Missing table janus.ohlc_1min. Apply docs/design/schema.sql first."
+            ) from exc
+
+        header = (
+            f"Download initial done: {canonical} 1m "
+            f"(account={target_account}, replace={bool(replace)}, rows={total_rows}, chunks={chunk_count})"
+        )
+        return "\n".join([header] + progress_lines)
+
+    @staticmethod
+    def _normalize_download_interval(value: str) -> str:
+        text = (value or "").strip().lower()
+        if text in ("1", "1m"):
+            return "1m"
+        if text == "1s":
+            return "1s"
+        if text == "5s":
+            return "5s"
+        if text == "tick":
+            return "tick"
+        if text in ("d", "1d"):
+            return "d"
+        return text
+
+    def _db_connect(self):
+        settings = self.config.get_database_setting()
+        dbname = settings.get("name") or settings.get("database") or "postgres"
+        params = {
+            "dbname": dbname,
+            "host": settings.get("host", "localhost"),
+            "port": settings.get("port", 5432),
+            "user": settings.get("user"),
+            "password": settings.get("password"),
+        }
+        params = {k: v for k, v in params.items() if v not in (None, "")}
+        return psycopg.connect(**params)
+
+    @staticmethod
+    def _get_symbol_registry_id(conn, canonical_symbol: str) -> int | None:
+        sql = "SELECT id FROM janus.symbol_registry WHERE canonical_symbol = %s"
+        with conn.cursor() as cur:
+            cur.execute(sql, (canonical_symbol,))
+            row = cur.fetchone()
+        if not row:
+            return None
+        return int(row[0])
+
+    @staticmethod
+    def _ohlc_1min_has_data(conn, symbol_id: int) -> bool:
+        sql = "SELECT 1 FROM janus.ohlc_1min WHERE symbol_id = %s LIMIT 1"
+        with conn.cursor() as cur:
+            cur.execute(sql, (symbol_id,))
+            return cur.fetchone() is not None
+
+    @staticmethod
+    def _delete_ohlc_1min(conn, symbol_id: int) -> int:
+        sql = "DELETE FROM janus.ohlc_1min WHERE symbol_id = %s"
+        with conn.cursor() as cur:
+            cur.execute(sql, (symbol_id,))
+            return cur.rowcount or 0
+
+    @staticmethod
+    def _upsert_ohlc_1min(conn, rows: list[tuple]) -> None:
+        sql = """
+            INSERT INTO janus.ohlc_1min (
+                symbol_id, ts, open, high, low, close, volume, wap, source
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s
+            )
+            ON CONFLICT (symbol_id, ts) DO UPDATE
+            SET
+                open = EXCLUDED.open,
+                high = EXCLUDED.high,
+                low = EXCLUDED.low,
+                close = EXCLUDED.close,
+                volume = EXCLUDED.volume,
+                wap = EXCLUDED.wap,
+                source = EXCLUDED.source
+        """
+        with conn.cursor() as cur:
+            cur.executemany(sql, rows)
+
+    @staticmethod
+    def _to_utc_ts(value: Any) -> datetime | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            dt = value
+        elif isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return None
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
+            try:
+                dt = datetime.fromisoformat(text)
+            except ValueError:
+                return None
+        else:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt
+
+    @staticmethod
+    def _to_numeric8(value: Any) -> Decimal:
+        try:
+            dec = Decimal(str(value))
+        except (InvalidOperation, ValueError, TypeError):
+            dec = Decimal("0")
+        return dec.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP)
+
+    @staticmethod
+    def _to_volume_int(value: Any) -> int:
+        try:
+            dec = Decimal(str(value))
+        except (InvalidOperation, ValueError, TypeError):
+            return 0
+        return int(dec.to_integral_value(rounding=ROUND_HALF_UP))
+
+    @staticmethod
+    def _fmt_ts(value: datetime | None) -> str:
+        if not value:
+            return "-"
+        return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S%z")
 
     def _get_ib_market_data_settings(self, account: str) -> dict:
         for acct in self.config.get_all_accounts():

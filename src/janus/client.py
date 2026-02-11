@@ -215,6 +215,8 @@ class JanusRpcClient(RpcClient):
                 self._handle_bars_command(parts, log_func, account_override=account_override)
             case "unbars":
                 self._handle_unbars_command(parts, log_func, account_override=account_override)
+            case "download":
+                self._handle_download_command(parts, log_func, account_override=account_override)
             case _:
                 log_func(f"Unknown command: {parts[0]}")
 
@@ -273,6 +275,7 @@ class JanusRpcClient(RpcClient):
             "  harmony                 Fill missing symbol mappings (server-side)",
             "  bars <symbol> [rth]     Subscribe to 5s IB bars (default all-hours)",
             "  unbars <symbol>         Unsubscribe from 5s IB bars",
+            "  download initial <symbol> <interval> [replace]",
             "  help [command]",
             "  exit|quit",
             "",
@@ -301,6 +304,7 @@ class JanusRpcClient(RpcClient):
             "harmony": "Usage: harmony  (fill missing symbol mappings)",
             "bars": "Usage: bars <symbol> [rth]  (subscribe to 5s bars)",
             "unbars": "Usage: unbars <symbol>  (unsubscribe from 5s bars)",
+            "download": "Usage: download initial <symbol> <interval> [replace]",
             "help": "Usage: help [command]",
             "exit": "Usage: exit  (stop remote server and quit)",
             "quit": "Usage: quit  (quit client)",
@@ -416,6 +420,35 @@ class JanusRpcClient(RpcClient):
         account = account_override or self.default_account
         self.request_unbars(symbol, account=account, log_func=log_func)
 
+    def _handle_download_command(
+        self,
+        parts: list,
+        log_func: Callable,
+        account_override: Optional[str] = None,
+    ) -> None:
+        if len(parts) < 4 or parts[1].lower() != "initial":
+            log_func("Usage: download initial <symbol> <interval> [replace]")
+            return
+
+        symbol = parts[2]
+        interval = parts[3]
+        replace = False
+        if len(parts) >= 5:
+            if parts[4].lower() == "replace":
+                replace = True
+            else:
+                log_func("Usage: download initial <symbol> <interval> [replace]")
+                return
+
+        account = account_override or self.default_account
+        self.request_download_initial(
+            symbol=symbol,
+            interval=interval,
+            account=account,
+            replace=replace,
+            log_func=log_func,
+        )
+
     def stop_remote_server(self):
         try:
             if hasattr(self, "remote_exit"):
@@ -498,6 +531,29 @@ class JanusRpcClient(RpcClient):
                 logger(str(res))
         except Exception as e:
             logger(f"Bars unsubscribe failed: {e}")
+
+    def request_download_initial(
+        self,
+        symbol: str,
+        interval: str,
+        account: Optional[str] = None,
+        replace: bool = False,
+        log_func: Optional[Callable[[str], None]] = None,
+    ) -> None:
+        logger = log_func or self.log_callback or print
+        if not hasattr(self, "_socket_req"):
+            return
+        remote = getattr(self, "download_initial", None)
+        if not remote:
+            logger("Download initial not available on server.")
+            return
+        target_account = account or self.default_account
+        try:
+            res = remote(symbol, interval, target_account, replace)
+            if res is not None:
+                logger(str(res))
+        except Exception as e:
+            logger(f"Download initial failed: {e}")
 
     def _refresh_snapshot(self, account: str, logger: Callable[[str], None]):
         try:

@@ -109,6 +109,29 @@ class SnapshotSyncClient(JanusRpcClient):
         ]
 
 
+class DownloadCapturingClient(JanusRpcClient):
+    def __init__(self):
+        super().__init__()
+        self.download_calls = []
+
+    def request_download_initial(
+        self,
+        symbol,
+        interval,
+        account=None,
+        replace=False,
+        log_func=None,
+    ):
+        self.download_calls.append(
+            {
+                "symbol": symbol,
+                "interval": interval,
+                "account": account,
+                "replace": replace,
+            }
+        )
+
+
 class ClientCommandTests(unittest.TestCase):
     def setUp(self):
         self.config_patcher = mock.patch("janus.client.ConfigLoader", FakeConfigLoader)
@@ -208,6 +231,46 @@ class ClientCommandTests(unittest.TestCase):
         logs = []
         client.process_command("harmony", logs.append)
         self.assertEqual(client.harmony_calls, 1)
+
+    def test_download_initial_command_routes_to_current_account(self):
+        client = DownloadCapturingClient()
+        logs = []
+
+        client.process_command("download initial qqq 1", logs.append)
+
+        self.assertEqual(len(client.download_calls), 1)
+        call = client.download_calls[0]
+        self.assertEqual(call["symbol"], "qqq")
+        self.assertEqual(call["interval"], "1")
+        self.assertEqual(call["account"], "acct1")
+        self.assertFalse(call["replace"])
+
+    def test_download_initial_command_with_replace(self):
+        client = DownloadCapturingClient()
+        logs = []
+
+        client.process_command("download initial qqq 1 replace", logs.append)
+
+        self.assertEqual(len(client.download_calls), 1)
+        self.assertTrue(client.download_calls[0]["replace"])
+
+    def test_download_initial_account_override(self):
+        client = DownloadCapturingClient()
+        logs = []
+
+        client.process_command("account acct2 download initial qqq 1 replace", logs.append)
+
+        self.assertEqual(len(client.download_calls), 1)
+        self.assertEqual(client.download_calls[0]["account"], "acct2")
+
+    def test_download_initial_usage_error(self):
+        client = DownloadCapturingClient()
+        logs = []
+
+        client.process_command("download initial", logs.append)
+
+        self.assertEqual(len(client.download_calls), 0)
+        self.assertTrue(any("Usage: download initial" in msg for msg in logs))
 
     def test_open_order_prices_for_stop_market(self):
         order = OrderData(

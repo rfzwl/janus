@@ -333,6 +333,75 @@ class IbAsyncApi:
 
         self._call_soon(_query)
 
+    def request_head_timestamp(
+        self,
+        req: SubscribeRequest,
+        what_to_show: str = "ADJUSTED_LAST",
+        use_rth: bool = False,
+        timeout: float = 10.0,
+    ) -> Optional[datetime]:
+        if not self._loop or not self._ib or not self._connected:
+            return None
+
+        what_to_show = (what_to_show or "ADJUSTED_LAST").upper()
+
+        async def _req() -> Optional[datetime]:
+            if not self._ib:
+                return None
+            contract = self._contract_from_symbol(req.symbol, req.exchange)
+            return await self._ib.reqHeadTimeStampAsync(
+                contract=contract,
+                whatToShow=what_to_show,
+                useRTH=use_rth,
+                formatDate=2,
+            )
+
+        fut = asyncio.run_coroutine_threadsafe(_req(), self._loop)
+        try:
+            return fut.result(timeout=timeout)
+        except Exception as exc:
+            self.gateway.write_log(f"IB head timestamp failed: {exc}")
+            return None
+
+    def request_historical_bars(
+        self,
+        req: SubscribeRequest,
+        end_datetime: Optional[datetime],
+        duration: str = "10 D",
+        bar_size: str = "1 min",
+        what_to_show: str = "ADJUSTED_LAST",
+        use_rth: bool = False,
+        timeout: float = 60.0,
+    ) -> list[Any]:
+        if not self._loop or not self._ib or not self._connected:
+            return []
+
+        what_to_show = (what_to_show or "ADJUSTED_LAST").upper()
+
+        async def _req() -> list[Any]:
+            if not self._ib:
+                return []
+            contract = self._contract_from_symbol(req.symbol, req.exchange)
+            bars = await self._ib.reqHistoricalDataAsync(
+                contract=contract,
+                endDateTime=end_datetime,
+                durationStr=duration,
+                barSizeSetting=bar_size,
+                whatToShow=what_to_show,
+                useRTH=use_rth,
+                formatDate=2,
+                keepUpToDate=False,
+                timeout=timeout,
+            )
+            return list(bars or [])
+
+        fut = asyncio.run_coroutine_threadsafe(_req(), self._loop)
+        try:
+            return fut.result(timeout=timeout + 5)
+        except Exception as exc:
+            self.gateway.write_log(f"IB historical bars failed: {exc}")
+            raise
+
     def _run_loop(self) -> None:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
@@ -908,6 +977,12 @@ class JanusIbGateway(BaseGateway):
 
     def request_contract_details(self, *args, **kwargs):
         return self.api.request_contract_details(*args, **kwargs)
+
+    def request_head_timestamp(self, req: SubscribeRequest, *args, **kwargs):
+        return self.api.request_head_timestamp(req, *args, **kwargs)
+
+    def request_historical_bars(self, req: SubscribeRequest, *args, **kwargs):
+        return self.api.request_historical_bars(req, *args, **kwargs)
 
     def process_timer_event(self, event: Event) -> None:
         self._timer_count += 1
