@@ -24,7 +24,11 @@ class DownloadInitialTests(unittest.TestCase):
             self.server.download_initial("QQQ", "5s", "ib_z", replace=False)
         self.assertIn("only 1m is enabled now", str(ctx.exception))
 
+    def test_download_initial_rejects_unsupported_interval_even_with_adjusted(self):
+        with self.assertRaises(ValueError) as ctx:
+            self.server.download_initial("QQQ", "5s", "ib_z", replace=False, adjusted=True)
+        self.assertIn("only 1m is enabled now", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
-

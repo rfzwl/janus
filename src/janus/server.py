@@ -312,6 +312,7 @@ class JanusServer:
         interval: str,
         account: str,
         replace: bool = False,
+        adjusted: bool = False,
     ) -> str:
         canonical = self.symbol_registry.normalize(symbol or "")
         if not canonical:
@@ -334,7 +335,7 @@ class JanusServer:
         conid = self._resolve_ib_conid(canonical)
         req = SubscribeRequest(symbol=str(conid), exchange=Exchange.SMART)
 
-        what_to_show = "ADJUSTED_LAST"
+        what_to_show = "ADJUSTED_LAST" if adjusted else "TRADES"
         use_rth = False
         duration = "10 D"
         bar_size = "1 min"
@@ -428,7 +429,7 @@ class JanusServer:
                                 self._to_numeric8(getattr(bar, "close", 0)),
                                 self._to_volume_int(getattr(bar, "volume", 0)),
                                 self._to_numeric8(getattr(bar, "average", 0)),
-                                "ib_adjusted_last",
+                                "ib_adjusted_last" if adjusted else "ib_trades",
                             )
                         )
 
@@ -476,7 +477,8 @@ class JanusServer:
 
         header = (
             f"Download initial done: {canonical} 1m "
-            f"(account={target_account}, replace={bool(replace)}, rows={total_rows}, chunks={chunk_count})"
+            f"(account={target_account}, replace={bool(replace)}, adjusted={bool(adjusted)}, "
+            f"rows={total_rows}, chunks={chunk_count})"
         )
         return "\n".join([header] + progress_lines)
 
