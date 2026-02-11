@@ -93,6 +93,10 @@ Futures are IB-only in Janus; skip Webull fill for `asset_class == "FUTURE"`.
 2) Should we allow per-account default market (e.g., US vs HK)?
 3) How to handle canonical_symbol collisions if non-US markets are added?
 
+## TODO
+- For each newly onboarded equity ticker, explicitly classify `asset_class` as `ETF` or `STOCK`.
+- Runtime behavior currently treats `EQUITY`, `ETF`, and `STOCK` as equity-like for IB harmony lookup.
+
 ## Phased Implementation Plan
 1) Postgres bootstrap
    - Create Postgres instance and schema for Janus symbol data.

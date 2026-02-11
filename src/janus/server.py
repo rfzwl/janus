@@ -83,6 +83,11 @@ class JanusServer:
         return mapping
 
     @staticmethod
+    def _is_equity_like_asset_class(asset_class: str | None) -> bool:
+        normalized = (asset_class or "EQUITY").strip().upper()
+        return normalized in {"EQUITY", "ETF", "STOCK"}
+
+    @staticmethod
     def _parse_exchange(value) -> Exchange:
         if isinstance(value, Exchange):
             return value
@@ -849,7 +854,7 @@ class JanusServer:
                     for record in self.symbol_registry.list_records():
                         if record.ib_conid:
                             continue
-                        if record.asset_class != "EQUITY":
+                        if not JanusServer._is_equity_like_asset_class(record.asset_class):
                             skipped.append(f"{record.canonical_symbol} (non-equity)")
                             continue
                         currency = (record.currency or "USD").upper()

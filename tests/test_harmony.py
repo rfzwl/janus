@@ -102,6 +102,29 @@ class HarmonyTests(unittest.TestCase):
         self.assertIn("skipped: 1", result)
         self.assertEqual(registry.ib_updates, [])
 
+    def test_harmony_treats_etf_and_stock_as_equity_like(self):
+        for asset_class, symbol, conid in (
+            ("ETF", "QQQ", 320227571),
+            ("STOCK", "AAPL", 265598),
+        ):
+            with self.subTest(asset_class=asset_class):
+                record = SymbolRecord(
+                    canonical_symbol=symbol,
+                    asset_class=asset_class,
+                    currency="USD",
+                    ib_conid=None,
+                    webull_ticker=None,
+                    description=None,
+                )
+                registry = FakeRegistry([record])
+                api = FakeIbApi({symbol: [FakeDetail(conid, "STK", symbol)]})
+                server = FakeServer(registry, api)
+
+                result = JanusServer.harmony(server)
+
+                self.assertIn("IB updated: 1", result)
+                self.assertEqual(registry.ib_updates[0][0], symbol)
+
 
 if __name__ == "__main__":
     unittest.main()
